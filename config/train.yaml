@@ -1,0 +1,76 @@
+loss_hyp:
+  cls_loss_scale: 0.5  # 分类损失权重
+
+train_hyp:
+  pretrained_model_path: ""  # 预训练模型路径
+  train_img_dir: "/home/uih/JYL/Dataset/SOD/DUTS-TR-master/DUTS-TR-Image"  # 存放训练图像的文件夹路径
+  train_seg_dir: "/home/uih/JYL/Dataset/SOD/DUTS-TR-master/DUTS-TR-Mask/"  # 存放训练label的文件夹路径
+  test_img_dir: "/home/uih/JYL/Projects/Others/GitHub/USquareNet/data/testimage"  # for test
+  val_img_dir: "/home/uih/JYL/Dataset/SOD/DUTS-TR-master/DUTS-TE-Image/"  # validation image dir
+  val_seg_dir: "/home/uih/JYL/Dataset/SOD/DUTS-TR-master/DUTS-TE-Mask/"  # validation label dir
+  cache_trainset: true
+  input_img_size:  # 输入训练网络的图片大小
+    - 448
+    - 448
+  batch_size: 16
+  drop_last: false  # Pytorch DataLoader中的参数
+  pin_memory: true  # Pytorch DataLoader中的参数
+  shuffle: true  # Pytorch DataLoader中的参数
+  num_workers: 6  # Pytorch DataLoader中的参数
+  total_epoch: 1000
+  device: "gpu"  # 是否使用GPU进行训练['gpu' or 'cpu']
+  accumulate_loss_step: 64  # 累积梯度下降
+  do_ema: true  # 是否维持一个Everage Moving Model
+  inference_every: 0.5  # 每隔多少个epoch validate一次
+  show_tbar_every: 1  # 每个多少个step显示实时训练状态信息
+  use_tta_when_val: false  # validation时是否使用TTA
+  log_save_path: ~  
+  save_log_txt: true  # 是否保存log文件
+  model_save_dir: ~
+  mutil_scale_training: false  # 是否使用多尺度训练
+  current_work_dir: null  # 当前工作目录（可以不设置）
+  calculate_metric_every: 1  # 每个多少个epoch计算一次iou
+  save_ckpt_every: 1  # 每隔多少个epoch保存一次模型
+  model_type: 'small'  # 使用模型类型
+  enable_tensorboard: true
+  enable_data_aug: true
+  random_seed: 42
+  fp16: true
+
+optimizer_hyp:
+  optimizer: 'adam' # 优化器类别/['sgd' or 'adam']
+  init_lr: 0.001
+  weight_decay: 0.0
+  momentum: 0.9
+  eps: 0.00000001
+  lr_scheculer_bias: 0.1
+
+warm_up:
+  do_warmup: true  # 是否开启预热训练
+  warmup_epoch: 3
+  warmup_bias_lr: 0.1
+  warmup_momentum: 0.8
+
+data_hyp:
+  data_aug_saturation_p: 0.1
+  data_aug_crop_p: 0.1
+  data_aug_blur_p: 0.1
+  data_aug_shear: 0.0
+  data_aug_translate: 0.1
+  data_aug_degree: 0.0
+  data_aug_perspective_p: 0.3
+  data_aug_prespective: 0.0
+  data_aug_hsv_p: 1.0
+  data_aug_hsv_hgain: 0.015
+  data_aug_hsv_sgain: 0.7
+  data_aug_hsv_vgain: 0.4
+  data_aug_fliplr_p: 0.5
+  data_aug_flipud_p: 0.0
+  data_aug_fill_value: 114
+  data_aug_cutout_p: 0.1
+  data_aug_brightness_p: 0.1
+  data_aug_cutout_iou_thr: 0.3  # 若随机产生的mask与target任一bbox的iou值大于该阈值，则会采取一些行动避免这种情况发生（默认操作是舍弃该mask）
+
+test_hyp:
+  half: true  # 是否使用半精度（float16）进行预测
+  use_ema_when_test: true
