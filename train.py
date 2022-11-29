@@ -15,6 +15,7 @@ import torch.cuda
 import numpy as np
 from torch import nn
 from tqdm import tqdm
+from tqdm import trange
 from loguru import logger
 from torch.cuda import amp
 import torch.optim as optim
@@ -31,8 +32,8 @@ from utils import ExponentialMovingAverageModel
 from utils import time_synchronize, summary_model
 from data import build_dataloader, build_testdataloader
 from utils import catch_warnnings
-from utils import Metric, save_seg
-from models import USquareNet, USquareNetTiny, USquareNetExeriment
+from utils import Metric, save_seg, resize_segmentation
+from models import UPerNet
 import gc
 
 
@@ -61,24 +62,17 @@ class Training:
         self.hyp['num_class'] = self.traindataset.num_class
         self.scaler = amp.GradScaler(enabled=self.use_cuda)  # mix precision training
         self.total_loss_meter  = AverageValueMeter()
-        self.stage1_loss_meter = AverageValueMeter()
-        self.stage2_loss_meter = AverageValueMeter()
-        self.stage3_loss_meter = AverageValueMeter()
-        self.stage4_loss_meter = AverageValueMeter()
-        self.stage5_loss_meter = AverageValueMeter()
-        self.stage6_loss_meter = AverageValueMeter()
-        self.concat_loss_meter = AverageValueMeter()
         self.metric = Metric()
         
         self.writer = SummaryWriter(log_dir=str(self.cwd / 'log'))
         self.init_lr = self.hyp['init_lr']
         
         # model, optimizer, loss, lr_scheduler, ema
-        self.model = USquareNetExeriment(in_channel=3, out_channel=self.hyp['num_class']).to(hyp['device'])
+        self.model = UPerNet(in_channel=3, num_class=self.hyp['num_class']).to(hyp['device'])
         ModelSummary(self.model, input_size=(1, 3, self.hyp['input_img_size'][0], self.hyp['input_img_size'][1]), device=self.hyp['device'])
         self.optimizer = self._init_optimizer()
         self.optim_scheduler = lr_scheduler.LambdaLR(optimizer=self.optimizer, lr_lambda=self._lr_lambda)
-        self.loss_fcn = MultiBCELoss()
+        self.loss_fcn = MultiBCELoss(num_class=self.hyp['num_class'])
         self.ema_model = ExponentialMovingAverageModel(self.model)
         # cpu不支持fp16训练
         self.data_type = torch.float16 if self.hyp['fp16'] and self.use_cuda else torch.float32
@@ -112,7 +106,8 @@ class Training:
                                                                seed=self.hyp['random_seed'], 
                                                                pin_memory=self.hyp['pin_memory'],
                                                                num_workers=self.hyp['num_workers'],
-                                                               enable_data_aug=True
+                                                               enable_data_aug=True, 
+                                                               cache_num=self.hyp['cache_num']
                                                                )
 
         else:
@@ -144,7 +139,7 @@ class Training:
     def _init_logger(self):
         clear_dir(str(self.cwd / 'log'))  # 再写入log文件前先清空log文件夹
         model_summary = summary_model(self.model, self.hyp['input_img_size'], verbose=True)
-        logger = logging.getLogger("USquareNet")
+        logger = logging.getLogger("UPerNet")
         formated_config = print_config(hyp)  # record training parameters in log.txt
         logger.setLevel(logging.INFO)
         if self.hyp['save_log_txt']:
@@ -170,8 +165,8 @@ class Training:
         return logger
 
     def _init_tbar(self):
-        tbar_tags = ("epoch", "tot", "s1", "s2", "s3", "s4", "s5", "s6", "sc", "imgsz", "lr", 'mae', 'f1', "time(s)")
-        msg = "%10s" * len(tbar_tags)
+        tbar_tags = ("epoch", "tot", "imgsz", "lr", 'pixel_acc', "time(s)")
+        msg = "%16s" * len(tbar_tags)
         print(msg % tbar_tags)
 
     def _lr_lambda(self, epoch, scheduler_type='linear'):
@@ -241,8 +236,11 @@ class Training:
                     else:
                         x = next(self.traindataloader)
                     cur_steps = per_epoch_iters * epoch + i + 1
-                    img    = x['img'].to(self.data_type)  # (bn, bbox_num, 6)
-                    gt_seg = x['seg'].to(self.data_type)  # (bn, 3, h, w)
+                    img    = x['img'].to(self.data_type)  # (bn, 3, h, w)
+                    gt_seg = x['seg'].to(self.data_type)  # (bn, num_class, h, w)
+                    # import pickle
+                    # pickle.dump(img.cpu().numpy(), open("./img.pkl", 'wb'))
+                    # pickle.dump(gt_seg.cpu().numpy(), open("./seg.pkl", 'wb'))
                     gt_seg.requires_grad = False
                     img, gt_seg = self.mutil_scale_training(img, gt_seg)
                     batchsz, inp_c, inp_h, inp_w = img.shape
@@ -252,8 +250,8 @@ class Training:
 
                     # forward
                     with amp.autocast(enabled=self.use_cuda):
-                        stage_preds = self.model(img)
-                        loss_dict = self.loss_fcn(stage_preds, gt_seg)
+                        preds = self.model(img)
+                        loss_dict = self.loss_fcn(preds, gt_seg)
 
                     tot_loss = loss_dict['total']
 
@@ -273,11 +271,11 @@ class Training:
                     self.update_loss_meter(loss_dict)
                     is_best = tot_loss.item() < tot_loss_before
                     if self.hyp['enable_tensorboard']:
-                        self.update_summarywriter(cur_steps, loss_dict, self.metric.mae, self.metric.f1)
+                        self.update_summarywriter(cur_steps, loss_dict, self.metric.pixel_acc)
                     tot_loss_before = tot_loss.item()
 
                     # verbose
-                    self.show_tbar(cur_steps, tbar, epoch+1, i, batchsz, is_best, inp_h, epoch_use_time, loss_dict, self.metric.mae, self.metric.f1)
+                    self.show_tbar(cur_steps, tbar, epoch+1, i, batchsz, is_best, inp_h, epoch_use_time, loss_dict, self.metric.pixel_acc)
                     # testing
                     self.test(cur_steps)
                     # validation
@@ -299,19 +297,19 @@ class Training:
             self.optim_scheduler.step()
             gc.collect()
 
-    def show_tbar(self, steps, tbar, epoch, step, batchsz, is_best, input_dim, epoch_use_time, loss_dict, mae, f1):
+    def show_tbar(self, steps, tbar, epoch, step, batchsz, is_best, input_dim, epoch_use_time, loss_dict, pixel_acc):
         if steps % int(self.hyp.get('show_tbar_every', 5)) == 0:
             # tbar
             lrs = [x['lr'] for x in self.optimizer.param_groups]
-            msg_dict = {"epoch": epoch, "input_dim": input_dim, "epoch_use_time": epoch_use_time, "lr": lrs[0], "mae": mae, "f1": f1}
+            msg_dict = {"epoch": epoch, "input_dim": input_dim, "epoch_use_time": epoch_use_time, "lr": lrs[0], "pixel_acc": pixel_acc}
             msg_dict.update({k:v.item() for k, v in loss_dict.items()})
             if epoch_use_time == 0.0:  # 不显示第一个epoch的用时
                 msg_dict['epoch_use_time'] = ""
-                #              ("epoch",         "tot",       "s1",         "s2",            "s3",           "s4",         "s5",            "s6",        "sc",        "imgsz",      "lr",      'mae',    'f1'             "time(s)")
-                tbar_msg = "#  {epoch:^10d}{total:^11.3f}{stage1:^10.3f}{stage2:^10.3f}{stage3:^10.3f}{stage4:^10.3f}{stage5:^10.3f}{stage6:^10.3f}{concat:^10.3f}{input_dim:^9d}{lr:^10.3e}{mae:^10.3f}{f1:^10.3f}{epoch_use_time:^12s}"
+                #              ("epoch",         "tot",        "imgsz",      "lr",      'pixel_acc',             "time(s)")
+                tbar_msg = "#  {epoch:^19d}{total:^18.3f}{input_dim:^13d}{lr:^16.3e}{pixel_acc:^14.3f}{epoch_use_time:^15s}"
             else:
-                #              ("epoch",         "tot",       "s1",         "s2",            "s3",           "s4",         "s5",            "s6",        "sc",        "imgsz",      "lr",      'iou',     'f1',           "time(s)")
-                tbar_msg = "#  {epoch:^10d}{total:^11.3f}{stage1:^10.3f}{stage2:^10.3f}{stage3:^10.3f}{stage4:^10.3f}{stage5:^10.3f}{stage6:^10.3f}{concat:^10.3f}{input_dim:^9d}{lr:^10.3e}{mae:^10.3f}{f1:^10.3f}{epoch_use_time:^12.1f}"
+                #              ("epoch",         "tot",        "imgsz",      "lr",      'iou',           "time(s)")
+                tbar_msg = "#  {epoch:^19d}{total:^18.3f}{input_dim:^13d}{lr:^16.3e}{pixel_acc:^14.3f}{epoch_use_time:^15.1f}"
             
             tbar.set_description_str(tbar_msg.format(**msg_dict))
 
@@ -349,11 +347,12 @@ class Training:
 
     def postprocess(self, inp, pred_segs, info):
         """
-
-        :param inp: normalization image (bs, 3, h, w)
-        :param outputs: (bs, 1, h, w)
-        :param info:
-        :return:
+        Inputs:
+            inp: normalization image (bs, 3, h, w)
+            outputs: (bs, 1, h, w)
+            info:
+        Outpus:
+            
         """
         assert isinstance(inp, np.ndarray)
         assert isinstance(inp, np.ndarray)
@@ -364,7 +363,7 @@ class Training:
         for i in range(batch_num):
             pad_top, pad_left = info[i]['pad_top'], info[i]['pad_left']
             pad_bot, pad_right = info[i]['pad_bottom'], info[i]['pad_right']
-            pred = pred_segs[i]
+            pred = pred_segs[i]  # (num_class, h, w)
             org_h, org_w = info[i]['org_shape']
             cur_h, cur_w = inp[i].shape[1], inp[i].shape[2]
 
@@ -376,12 +375,9 @@ class Training:
             img = cv2.resize(img, (org_w, org_h), interpolation=0)
             processed_imgs.append(img)
             
-            pred = np.transpose(pred_segs[i], axes=[1, 2, 0])  # (h, w, 1)
-            pred = np.squeeze(pred)  # (h, w)
-            pred = (pred - np.min(pred)) / (np.max(pred) - np.min(pred))
-            pred = np.clip(pred * 255, 0, 255).astype(np.uint8)
+            pred = np.argmax(pred_segs[i], axis=0).astype(np.uint8)  # (h, w)
             pred = pred[pad_top:(cur_h - pad_bot), pad_left:(cur_w - pad_right)]
-            pred = cv2.resize(pred, (org_w, org_h), interpolation=0)
+            pred = resize_segmentation(pred, (org_h, org_w))
             processed_segs.append(pred)
 
         return processed_imgs, processed_segs
@@ -407,11 +403,10 @@ class Training:
             else:
                 self.hyp['device'] = 'cpu'
 
-    def update_summarywriter(self, steps, loss_dict, mae, f1):
+    def update_summarywriter(self, steps, loss_dict, pixel_acc):
         lrs = [x['lr'] for x in self.optimizer.param_groups]
         self.writer.add_scalar(f'train/{self.hyp["optimizer"]}_lr', lrs[0], steps)
-        self.writer.add_scalar('train/mae', mae, steps//int(self.hyp['calculate_metric_every'] * len(self.traindataloader)))
-        self.writer.add_scalar('train/f1', f1, steps//int(self.hyp['calculate_metric_every'] * len(self.traindataloader)))
+        self.writer.add_scalar('train/pixel_acc', pixel_acc, steps//int(self.hyp['calculate_metric_every'] * len(self.traindataloader)))
 
         for k in loss_dict.keys():
             mean_value = eval(f"self.{k}_loss_meter.value()[0]")
@@ -456,6 +451,8 @@ class Training:
 
                     if load_optimizer and "optim_state_dict" in state_dict and state_dict.get("optim_type", None) == self.hyp['optimizer']:  # load optimizer
                         self.optimizer.load_state_dict(state_dict['optim_state_dict'])
+                        self.optim_scheduler.load_state_dict(state_dict['lr_scheduler_state_dict'])
+                        self.scaler.load_state_dict(state_dict['scaler_state_dict'])
                         print(f"use pretrained optimizer {model_path}")
 
                     if "ema" in state_dict:  # load EMA model
@@ -491,6 +488,8 @@ class Training:
             state_dict = {
                 "model_state_dict": self.model.state_dict(),
                 "optim_state_dict": optim_state,
+                "scaler_state_dict": self.scaler.state_dict(),
+                "lr_scheduler_state_dict": self.optim_scheduler.state_dict(),
                 "optim_type": self.hyp['optimizer'], 
                 "loss": loss,
                 "epoch": epoch,
@@ -510,26 +509,23 @@ class Training:
     def do_eval_forward(self, imgs):
         self.model.eval()
         with torch.no_grad():   
-            pred_segs = torch.sigmoid(self.model(imgs.float())['concat'])  # (bs, 1, h, w)
+            pred_segs = F.softmax(self.model(imgs.float())['fuse'], dim=1)  # (bs, num_class, h, w)
         self.model.train()
         return pred_segs
 
     def cal_metric(self, steps):
         if steps % int(self.hyp.get('calculate_metric_every', 0.5) * len(self.traindataloader)) == 0:
             self.metric.clear()
-            for _ in range(len(self.valdataloader)):
+            for _ in trange(len(self.valdataloader)):
                 if self.valprefetcher is not None:
                     x = self.valprefetcher.next()
                 else:
                     x = next(self.valdataloader)
                 imgs      = x['img'].float()  # (bn, 3, h, w)
                 gt_segs   = x['seg'].float()  # (bn, 1, h, w)
-                pred_segs = self.do_eval_forward(imgs)   # (bn, 1, h, w)
-                pred_reshape   = pred_segs.reshape(pred_segs.shape[0], 1, 1, -1)
-                pred_batch_min = torch.min(pred_reshape, dim=-1, keepdim=True)[0]
-                pred_batch_max = torch.max(pred_reshape, dim=-1, keepdim=True)[0]
-                pred_segs      = (pred_segs - pred_batch_min) / (pred_batch_max - pred_batch_min)
-                self.metric.update(pred_segs, gt_segs)
+                pred_segs = self.do_eval_forward(imgs)   # (bn, num_class, h, w)
+                pred_segs_finnal = torch.argmax(pred_segs, dim=1, keepdim=True)  # (bs, h, w)
+                self.metric.update(pred_segs_finnal.cpu().numpy(), gt_segs.cpu().numpy())
                 del imgs, gt_segs, pred_segs
             gc.collect()
 
@@ -543,9 +539,9 @@ class Training:
                 img  = y['img'].to(self.data_type)  # (1, 3, h, w)
                 info = y['resize_info']
                 if self.hyp['use_tta_when_val']:
-                    pred_seg = self.tta(img)  # (1, 1, h, w)
+                    pred_seg = self.tta(img)  # (1, num_class, h, w)
                 else:
-                    pred_seg = self.do_eval_forward(img)  # (1, 1, h, w)
+                    pred_seg = self.do_eval_forward(img)  # (1, num_class, h, w)
                 img_numpy, pred_seg_numpy = self.postprocess(img.cpu().numpy(), pred_seg.cpu().numpy(), info)
                 for k in range(len(img)):
                     save_path = str(self.cwd / 'result' / 'predictions' / f"{j + k} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.png")
@@ -557,9 +553,13 @@ class Training:
     @staticmethod
     def scale_img(img, scale_factor):
         """
-        :param img: (bn, 3, h, w)
-        :param scale_factor: 输出的img shape必须能被scale_factor整除
-        :return:
+        Inputs:
+            img: (bn, 3, h, w)
+            scale_factor: 输出的img shape必须能被scale_factor整除
+        Outputs:
+            resized_img: 
+            new_h: resized_img's height
+            new_w: resized_img's width
         """
         h, w = img.shape[2], img.shape[3]
         if scale_factor == 1.0:
@@ -590,20 +590,20 @@ class Training:
             else:
                 img_aug = imgs
             img_aug, h, w = self.scale_img(img_aug, s)
-            pred_segs = self.do_eval_forward(img_aug)  # (bs, 1, h, w)
+            pred_segs = self.do_eval_forward(img_aug)  # (bs, num_class, h, w)
             pred_segs = pred_segs[:, :, :h, :w]
             if s != 1.:
-                pred_segs = F.interpolate(pred_segs, (org_img_h, org_img_w), align_corners=False, mode="bilinear")
+                pred_segs = resize_segmentation(pred_segs, (org_img_h, org_img_w))
             if f:  # restore flip
                 pred_segs = pred_segs.flip(dims=(f,)).contiguous()
-            # [(bs, 1, h, w), (bs, 1, h, w), (bs, 1, h, w)]
+            # [(bs, num_class, h, w), (bs, num_class, h, w), (bs, num_class, h, w)]
             tta_preds.append(pred_segs)
 
         pred_segs_out = tta_preds[0] * (1 / len(tta_preds))
         for i in range(1, len(tta_preds)):
             pred_segs_out += tta_preds[i] *  (1 / len(tta_preds))
         
-        return pred_segs_out  # (bs, 1, h, w)
+        return pred_segs_out  # (bs, num_class, h, w)
 
 if __name__ == '__main__':
     from utils import print_config

@@ -3,10 +3,12 @@ from torch.utils.data import Dataset as TorchDataset
 import numbers
 
 
-class SODDataset(TorchDataset):
+__all__ = ["Dataset"]
+
+class Dataset(TorchDataset):
 
     def __init__(self, input_dimension, enable_data_aug=True) -> None:
-        super(SODDataset, self).__init__()
+        super(Dataset, self).__init__()
         self.enable_data_aug = enable_data_aug
         self.__input_dim = input_dimension
 

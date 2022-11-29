@@ -3,11 +3,12 @@ from functools import reduce
 import cv2
 import numpy as np
 import math
+from skimage.transform import resize as skresize
 
 
 __all__ = ["letter_resize", "RandomHSV", "RandomPerspective", "RandomBlur", 
           "RandomSaturation", "RandomBrightness",  "RandomCrop", "RandomFlipLR", 
-          "RandomFlipUD", "RandomCutout"]
+          "RandomFlipUD", "RandomCutout", "resize_segmentation", "RandomShift"]
 
 
 def letter_resize(img, seg, dst_size, stride=64, fill_value=114, only_ds=False, training=True):
@@ -42,8 +43,8 @@ def letter_resize(img, seg, dst_size, stride=64, fill_value=114, only_ds=False, 
     resized_seg = seg.copy()
     if scale != 1.:
         resize_h, resize_w = int(org_h * scale), int(org_w * scale)
-        resized_img = cv2.resize(resized_img, (resize_w, resize_h), interpolation=0)
-        resized_seg = cv2.resize(resized_seg, (resize_w, resize_h), interpolation=0)
+        resized_img = np.ascontiguousarray(cv2.resize(resized_img, (resize_w, resize_h), interpolation=4))
+        resized_seg = np.ascontiguousarray(resize_segmentation(resized_seg[:, :, 0], (resize_h, resize_w)))
         if resized_seg.ndim == 2:
             resized_seg = resized_seg[..., None]
     else:
@@ -55,17 +56,17 @@ def letter_resize(img, seg, dst_size, stride=64, fill_value=114, only_ds=False, 
     if not training:
         pad_h, pad_w = dst_size[0] - resize_h, dst_size[1] - resize_w
         pad_h, pad_w = np.remainder(pad_h, stride), np.remainder(pad_w, stride)
-        top = int(round(pad_h / 2))
+        top  = int(round(pad_h / 2))
         left = int(round(pad_w / 2))
         bottom = pad_h - top
-        right = pad_w - left
+        right  = pad_w - left
         if isinstance(fill_value, int):
             fill_value = (fill_value, fill_value, fill_value)
         img_out = cv2.copyMakeBorder(resized_img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=fill_value)
         seg_out = cv2.copyMakeBorder(resized_seg, top, bottom, left, right, cv2.BORDER_CONSTANT, value=0)
     else:
-        pad_h, pad_w = dst_size[0] - resize_h, dst_size[1] - resize_w
-        top, left = pad_h // 2, pad_w // 2
+        pad_h, pad_w  = dst_size[0] - resize_h, dst_size[1] - resize_w
+        top, left     = pad_h // 2, pad_w // 2
         bottom, right = pad_h - top, pad_w - left
         img_out[top:(top+resize_h), left:(left+resize_w)] = resized_img
         seg_out[top:(top+resize_h), left:(left+resize_w)] = resized_seg
@@ -398,11 +399,37 @@ def scale_jitting(img, seg, resize_shape=[320, 320] , dst_size=[224, 224]):
     return out_img, out_seg
 
 
+def resize_segmentation(segmentation, new_shape, order=3, cval=0):
+    '''
+    Resizes a segmentation map. Supports all orders (see skimage documentation). Will transform segmentation map to one
+    hot encoding which is resized and transformed back to a segmentation map.
+    This prevents interpolation artifacts ([0, 0, 2] -> [0, 1, 2])
+    :param segmentation:
+    :param new_shape: [h, w]
+    :param order: 3 is Bi-cubic
+    :return:
+    '''
+    tpe = segmentation.dtype
+    unique_labels = np.unique(segmentation)
+    assert len(segmentation.shape) == len(new_shape), "new shape must have same dimensionality as segmentation"
+    if order == 0:
+        return skresize(segmentation.astype(float), new_shape, order, mode="constant", cval=cval, clip=True, anti_aliasing=False).astype(tpe)
+    else:
+        reshaped = np.zeros(new_shape, dtype=segmentation.dtype)
+
+        for i, c in enumerate(unique_labels):
+            mask = segmentation == c
+            reshaped_multihot = skresize(mask.astype(float), new_shape, order, mode="edge", clip=True, anti_aliasing=False)
+            reshaped[reshaped_multihot >= 0.5] = c
+        return reshaped
+
+
+
 if __name__ == '__main__':
     # test CV2Transform
     import matplotlib.pyplot as plt
-    img_path = r'/home/uih/JYL/Dataset/SOD/DUTS-TR-master/DUTS-TR-Image/ILSVRC2012_test_00000004.jpg'
-    lab_path = r"/home/uih/JYL/Dataset/SOD/DUTS-TR-master/DUTS-TR-Mask/ILSVRC2012_test_00000004.jpg"
+    img_path = r'../../../../../Dataset/SOD/DUTS-TR-master/DUTS-TR-Image/ILSVRC2012_test_00000004.jpg'
+    lab_path = r"../../../../../Dataset/SOD/DUTS-TR-master/DUTS-TR-Mask/ILSVRC2012_test_00000004.jpg"
     bbox_head = np.array([[96, 374, 143, 413]])
     cv_img = cv2.imread(img_path)
     cv_lab = cv2.imread(lab_path, 0)

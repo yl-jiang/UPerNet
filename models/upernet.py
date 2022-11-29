@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-__all__ = ["USquareNet"]
+__all__ = ["UPerNet"]
 
 
 def freeze_bn(m):
@@ -208,7 +208,7 @@ class FeaturePyramidNet(nn.Module):
 
 class UPerNet(nn.Module):
 
-    def __init__(self, in_channel, layers, num_class, fpn_dim=256):
+    def __init__(self, in_channel=3, layers=[3, 4, 6, 3], num_class=20, fpn_dim=256):
         super(UPerNet, self).__init__()
         self.fpn_dim = fpn_dim
         self.backbone = ResidualNet(in_channel, Bottleneck, layers)
@@ -216,6 +216,7 @@ class UPerNet(nn.Module):
         self.fpn = FeaturePyramidNet(self.fpn_dim)
         self.fuse = ConvBnAct(fpn_dim*4, fpn_dim, 1, 1, 0)
         self.seg = nn.Sequential(ConvBnAct(fpn_dim, fpn_dim, 1, 1, 0), nn.Conv2d(fpn_dim, num_class, 1, 1, 0, bias=True))
+        self.out = nn.Conv2d(num_class, num_class, 3, 1, 1)
 
     def forward(self, x):
         seg_size = x.shape[2:]
@@ -229,8 +230,9 @@ class UPerNet(nn.Module):
         list_f.append(F.interpolate(fpn_f['fpn_layer2'], out_size, mode='bilinear', align_corners=False))
         list_f.append(F.interpolate(fpn_f['fpn_layer3'], out_size, mode='bilinear', align_corners=False))
         list_f.append(F.interpolate(fpn_f['fpn_layer4'], out_size, mode='bilinear', align_corners=False))
-        x = self.fuse(torch.cat(list_f, dim=1))
-        pred = F.interpolate(x, seg_size, mode='bilinear', align_corners=False)
+        x = self.seg(self.fuse(torch.cat(list_f, dim=1)))
+        pred = self.out(F.interpolate(x, seg_size, mode='bilinear', align_corners=False))
+        
         return {'fuse': pred}
         
         
@@ -240,5 +242,5 @@ if __name__ == "__main__":
     img = torch.rand(8, 3, 448, 448).float()
     net = UPerNet(3, [3, 4, 6, 3])
     out = net(img)
-    print(f"{out.shape}")
+    print(f"{out['fuse'].shape}")
 

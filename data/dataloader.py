@@ -6,7 +6,6 @@ import cv2
 from utils import *
 from functools import partial
 from torch.utils.data import Sampler
-from .dataset_warpper import SODDataset
 import torch.distributed as dist
 from torch.utils.data.sampler import BatchSampler as TorchBatchSampler
 import itertools
@@ -15,24 +14,27 @@ from loguru import logger
 import os
 import random
 import uuid
+from functools import wraps
+from torch.utils.data import Dataset as TorchDataset
+import numbers
 
 
-__all__ = ["fixed_imgsize_collector", "DUTSDataset", "SODBatchSampler", 
-           "InfiniteSampler", "SODDataLoader", "DataPrefetcher", "build_dataloader", 
+__all__ = ["fixed_imgsize_collector", "CitySpaceDataset", "CitySpaceBatchSampler", 
+           "InfiniteSampler", "CitySpaceDataLoader", "DataPrefetcher", "build_dataloader", 
            "Transforms"]
 
     
-def normal_normalization(img, seg):
+def normal_normalization(img):
     norm_img = torch.from_numpy(img / (np.max(img) + 1e-8)).permute(2, 0, 1).contiguous()
-    norm_seg = torch.from_numpy(seg / (np.max(seg) + 1e-8)).permute(2, 0, 1).contiguous()
-    return norm_img, norm_seg
+    return norm_img
+
 
 def fixed_imgsize_collector(data_in, dst_size):
     """
     将Dataset中__getitem__方法返回的每个值进行进一步组装。
 
     :param data_in: tuple, data[0] is image, data[1] is seg, data[2] is image's id
-    :param dst_size:
+    :param dst_size: [h, w]
     :return: dictionary
     """
     # 输入图像的格式为(h,w,3)
@@ -48,12 +50,13 @@ def fixed_imgsize_collector(data_in, dst_size):
     imgs_out = torch.zeros(batch_size, 3, dst_size[0], dst_size[1])
     segs_out = torch.zeros(batch_size, 1, dst_size[0], dst_size[1])
 
-
     for b in range(batch_size):
         img = imgs[b]  # ndarray
         seg = segs[b] 
-        img, seg = letter_resize(img, seg, dst_size)
-        imgs_out[b], segs_out[b] = normal_normalization(img, seg)
+        if img.shape[0] != dst_size[0] or img.shape[1] != dst_size[1]:
+            img, seg = letter_resize(img, seg, dst_size)
+        imgs_out[b] = normal_normalization(img)
+        segs_out[b] = torch.from_numpy(seg.copy()).permute(2, 0, 1).contiguous()
 
     return {'img': imgs_out, 'seg': segs_out, 'id': np.asarray(img_ids)}
 
@@ -64,6 +67,7 @@ class Transforms:
         self.hyp = data_aug_hyp
 
     def __call__(self, img, seg):
+        img, seg = RandomShift(img, seg, self.hyp['data_aug_shift_p'], fill_value=self.hyp["data_aug_fill_value"])
         img = RandomBrightness(img, prob=self.hyp['data_aug_brightness_p'])
         img, seg = RandomFlipLR(img, seg, prob=self.hyp['data_aug_fliplr_p'])
         img, seg = RandomFlipUD(img, seg, prob=self.hyp['data_aug_flipud_p'])
@@ -85,48 +89,91 @@ class Transforms:
         img, seg = RandomCrop(img, seg, self.hyp['data_aug_crop_p'])
         img, seg = RandomCutout(img, seg, prob=self.hyp['data_aug_cutout_p'])
         return img, seg
+
+
+class Dataset(TorchDataset):
+
+    def __init__(self, input_dimension, enable_data_aug=True) -> None:
+        super(Dataset, self).__init__()
+        self.enable_data_aug = enable_data_aug
+        self.__input_dim = input_dimension
+
+
+    @property
+    def input_dim(self):
+        """
+        Dimension that can be used by transforms to set the correct image size, etc.
+        This allows transforms to have a single source of truth
+        for the input dimension of the network.
+
+        Return:
+            list: Tuple containing the current width,height
+        """
+        if hasattr(self, "_input_dim"):
+            return self._input_dim
+
+        if isinstance(self.__input_dim, numbers.Number):
+            self.__input_dim = [self.__input_dim, self.__input_dim]
+        return self.__input_dim
         
 
-class DUTSDataset(SODDataset):
+    @staticmethod
+    def aug_getitem(getitem_func):
+        @wraps(getitem_func)
+        def wrapper(self, index):
+            if not isinstance(index, int):
+                self.enable_data_aug = index[0]
+                index = index[1]
+            
+            ret = getitem_func(self, index)
+            return ret
+        return wrapper
 
-    def __init__(self, img_dir, seg_dir, img_size=448, enable_data_aug=True, transform=None, do_cache=True) -> None:
-        super(DUTSDataset, self).__init__(enable_data_aug=enable_data_aug, input_dimension=img_size)
+
+class CitySpaceDataset(Dataset):
+
+    def __init__(self, img_dir, seg_dir, img_size, enable_data_aug=True, transform=None, cache_num=0) -> None:
+        super(CitySpaceDataset, self).__init__(enable_data_aug=enable_data_aug, input_dimension=img_size)
         self.img_dir = img_dir
         self.seg_dir = seg_dir
         self.trans = transform
         self.db_img, self.db_seg = self.make_db()
         self.imgs = None
-        if do_cache:
+        if cache_num > 0:
+            self.cache_num =  cache_num if cache_num <= len(self) else len(self) # len(self)
             self._cache_images()
 
     @property
     def num_class(self):
-        return 1
+        return 20
 
     def make_db(self):
         img_filepathes = [p for p in Path(self.img_dir).iterdir() if p.suffix in ([".jpg", ".png", ".tiff"])]
         seg_filepathes = [p for p in Path(self.seg_dir).iterdir() if p.suffix in ([".jpg", ".png", ".tiff"])]
         assert len(img_filepathes) == len(seg_filepathes), f"len(img_filepathes): {len(img_filepathes)}, but len(seg_filenames): {len(seg_filepathes)}"
+        #                                                     (aachen              , 000062              , 000019)
+        img_filepathes = sorted(img_filepathes, key=lambda x: (x.stem.split("_")[0], x.stem.split("_")[1], x.stem.split("_")[2]))
+        seg_filepathes = sorted(seg_filepathes, key=lambda x: (x.stem.split("_")[0], x.stem.split("_")[1], x.stem.split("_")[2]))
 
-        img_filepathes = sorted(img_filepathes, key=lambda x: x.stem.split("_")[-1])
-        seg_filepathes = sorted(seg_filepathes, key=lambda x: x.stem.split("_")[-1])
-
-        seg_filenames = [p.stem for p in seg_filepathes]
+        seg_filenames = ['_'.join(p.stem.split("_")[:-2]) for p in seg_filepathes]
         for i, p in enumerate(img_filepathes):
-            assert p.stem in seg_filenames, f"image filename: {img_filepathes[i]}, can not found matched segmentation file."
+            img_filename = '_'.join(p.stem.split("_")[:-1])
+            assert img_filename in seg_filenames, f"image filename: {img_filepathes[i]}, can not found matched segmentation file."
         return img_filepathes, seg_filepathes
-
 
     def __len__(self):
         return len(self.db_img)
 
-    
     def load_resized_data_pair(self, index):
         img_p = self.db_img[index]
         seg_p = self.db_seg[index]
         img_arr = cv2.imread(str(img_p))  # (h, w, 3)
         img_arr = cv2.cvtColor(img_arr, cv2.COLOR_BGR2RGB)
         seg_arr = cv2.imread(str(seg_p), 0)[:, :, None]  # (h, w, 1)
+        # cityspace数据集中的背景类mask值为255, 将背景类的mask修改为0
+        bg_mask = seg_arr == 255
+        seg_arr += 1
+        seg_arr[bg_mask] = 0
         img_arr, seg_arr = letter_resize(img_arr, seg_arr, self.input_dim)
         # (h, w, 3) & (h, w, 1) -> (h, w, 4)
         return np.concatenate([img_arr, seg_arr], axis=-1)
@@ -142,13 +189,14 @@ class DUTSDataset(SODDataset):
         )
         max_h = self.input_dim[0]
         max_w = self.input_dim[1]
+        
         cache_file = os.path.join(str(Path(self.img_dir).parent), f"img_resized_cache.array")
         print(f"cache_file path: {cache_file}")
         if not os.path.exists(cache_file):
             logger.info("Caching images for the first time. This might take about 20 minutes for COCO")
             self.imgs = np.memmap(
                 cache_file,
-                shape=(len(self), max_h, max_w, 4),
+                shape=(self.cache_num, max_h, max_w, 4),
                 dtype=np.uint8,
                 mode="w+",
             )
@@ -156,8 +204,8 @@ class DUTSDataset(SODDataset):
             from multiprocessing.pool import ThreadPool
 
             NUM_THREADs = min(8, os.cpu_count())
-            loaded_images = ThreadPool(NUM_THREADs).imap(lambda x: self.load_resized_data_pair(x), range(len(self)))
-            pbar = tqdm(enumerate(loaded_images), total=len(self))
+            loaded_images = ThreadPool(NUM_THREADs).imap(lambda x: self.load_resized_data_pair(x), range(self.cache_num))
+            pbar = tqdm(enumerate(loaded_images), total=self.cache_num)
             for k, out in pbar:
                 self.imgs[k][: out.shape[0], : out.shape[1], :] = out.copy()
             self.imgs.flush()
@@ -172,14 +220,14 @@ class DUTSDataset(SODDataset):
         logger.info("Loading cached imgs...")
         self.imgs = np.memmap(
             cache_file,
-            shape=(len(self), max_h, max_w, 4),
+            shape=(self.cache_num, max_h, max_w, 4),
             dtype=np.uint8,
             mode="r+",
         )
 
         
     def pull_item(self, index):
-        if self.imgs is not None:
+        if self.imgs is not None and index < self.cache_num:
             data_pair = self.imgs[index]
             img_arr = data_pair[..., :3]
             seg_arr = data_pair[..., -1:]
@@ -188,9 +236,16 @@ class DUTSDataset(SODDataset):
             seg_p = self.db_seg[index]
             img_arr = cv2.imread(str(img_p))  # (h, w, 3)
             seg_arr = cv2.imread(str(seg_p), 0)[:, :, None]  # (h, w, 1)
+
+        # cityspace数据集中的背景类mask值为255, 将背景类的mask修改为0
+        if len(seg_arr[seg_arr == 255]) > 0:
+            bg_mask = seg_arr == 255
+            seg_arr += 1
+            seg_arr[bg_mask] = 0
+
         return img_arr, seg_arr
 
-    @SODDataset.aug_getitem
+    @Dataset.aug_getitem
     def __getitem__(self, index):
         img_arr, seg_arr = self.pull_item(index) 
 
@@ -200,7 +255,7 @@ class DUTSDataset(SODDataset):
         return img_arr, seg_arr, index
 
 
-class SODBatchSampler(TorchBatchSampler):
+class CitySpaceBatchSampler(TorchBatchSampler):
     """
     This batch sampler will generate mini-batches of (mosaic, index) tuples from another sampler.
     It works just like the :class:`torch.utils.data.sampler.BatchSampler`,
@@ -208,7 +263,7 @@ class SODBatchSampler(TorchBatchSampler):
     """
 
     def __init__(self, *args, enable_data_aug=True, **kwargs):
-        super(SODBatchSampler, self).__init__(*args, **kwargs)
+        super(CitySpaceBatchSampler, self).__init__(*args, **kwargs)
         self.enable_data_aug = enable_data_aug
 
     def __iter__(self):
@@ -272,7 +327,7 @@ class InfiniteSampler(Sampler):
         return self._size // self._world_size
 
 
-class SODDataLoader(TorchDataLoader):
+class CitySpaceDataLoader(TorchDataLoader):
     def __init__(self, *args, **kwargs):
         self.__initialized = False
         shuffle = False
@@ -291,16 +346,15 @@ class SODDataLoader(TorchDataLoader):
                     sampler = torch.utils.data.sampler.RandomSampler(self.dataset)
                 else:
                     sampler = torch.utils.data.sampler.SequentialSampler(self.dataset)
-            batch_sampler = SODBatchSampler(sampler, self.batch_size, self.drop_last)
+            batch_sampler = CitySpaceBatchSampler(sampler, self.batch_size, self.drop_last)
 
         self.batch_sampler = batch_sampler
         
-        super(SODDataLoader, self).__init__(*args, **kwargs)
+        super(CitySpaceDataLoader, self).__init__(*args, **kwargs)
         self.__initialized = True
 
     def close_data_aug(self):
         self.batch_sampler.enable_data_aug = False
-
 
 
 def worker_init_reset_seed(worker_id):
@@ -360,26 +414,27 @@ class DataPrefetcher:
 def build_dataloader(img_dir, seg_dir, data_aug_hyp,
                      batch_size=16, 
                      drop_last=False, 
-                     dst_size=448, 
+                     dst_size=None, 
                      enable_data_aug=True, 
                      num_workers=0, 
                      pin_memory=True, 
-                     seed=42):
+                     seed=42, 
+                     cache_num=0):
     # batch_size = batch_size // dist.get_world_size()
     if enable_data_aug:
         transform = Transforms(data_aug_hyp)
     else:
         transform = None
-    dataset = DUTSDataset(img_dir, seg_dir, dst_size, enable_data_aug, transform=transform)
+    dataset = CitySpaceDataset(img_dir, seg_dir, dst_size, enable_data_aug, transform=transform, cache_num=cache_num)
     sampler = InfiniteSampler(len(dataset), seed=seed if seed else 0)
-    batch_sampler = SODBatchSampler(sampler=sampler, batch_size=batch_size, drop_last=drop_last, enable_data_aug=enable_data_aug)
+    batch_sampler = CitySpaceBatchSampler(sampler=sampler, batch_size=batch_size, drop_last=drop_last, enable_data_aug=enable_data_aug)
     dataloader_kwargs = {"num_workers": num_workers, 
                          "pin_memory": pin_memory, 
                          "batch_sampler": batch_sampler, 
                          "worker_init_fn": worker_init_reset_seed,
                          "collate_fn": partial(fixed_imgsize_collector, dst_size=dataset.input_dim)
                         }
-    dataloader = SODDataLoader(dataset, **dataloader_kwargs)
+    dataloader = CitySpaceDataLoader(dataset, **dataloader_kwargs)
     if torch.cuda.is_available():
         prefetcher = DataPrefetcher(dataloader)
     else:

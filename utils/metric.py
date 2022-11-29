@@ -43,8 +43,8 @@ class Metric:
 
     @property
     def pixel_acc(self):
-        if len(self.__mae) > 0:
-            return np.mean(self.__mae)
+        if len(self.__pixel_acc) > 0:
+            return np.mean(self.__pixel_acc)
         else:
             return 0
 
