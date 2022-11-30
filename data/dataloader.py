@@ -148,6 +148,9 @@ class CitySpaceDataset(Dataset):
         return 20
 
     def make_db(self):
+        assert Path(self.img_dir).exists(), f"directory: {self.img_dir} is not exists!"
+        assert Path(self.seg_dir).exists(), f"directory: {self.seg_dir} is not exists!"
+
         img_filepathes = [p for p in Path(self.img_dir).iterdir() if p.suffix in ([".jpg", ".png", ".tiff"])]
         seg_filepathes = [p for p in Path(self.seg_dir).iterdir() if p.suffix in ([".jpg", ".png", ".tiff"])]
         assert len(img_filepathes) == len(seg_filepathes), f"len(img_filepathes): {len(img_filepathes)}, but len(seg_filenames): {len(seg_filepathes)}"
@@ -420,7 +423,8 @@ def build_dataloader(img_dir, seg_dir, data_aug_hyp,
                      pin_memory=True, 
                      seed=42, 
                      cache_num=0):
-    # batch_size = batch_size // dist.get_world_size()
+    if dist.is_available() and dist.is_initialized():
+        batch_size = batch_size // dist.get_world_size()
     if enable_data_aug:
         transform = Transforms(data_aug_hyp)
     else:

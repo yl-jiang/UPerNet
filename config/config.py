@@ -12,6 +12,7 @@ class Config:
             self.config.update({k: v}) 
 
     def get_config(self, cfg, args=None):
+        assert Path(cfg).exists(), f"config file: {cfg} is not exists!"
         configs = yaml.load(open(str(cfg)), Loader=yaml.FullLoader)
         for k, v in configs.items():
             self.config.update(v)
