@@ -193,7 +193,7 @@ class CitySpaceDataset(Dataset):
         max_h = self.input_dim[0]
         max_w = self.input_dim[1]
         
-        cache_file = os.path.join(str(Path(self.img_dir).parent), f"img_resized_cache.array")
+        cache_file = os.path.join(str(Path(self.img_dir).parent), f"img_resized_cache_h{max_h}_w{max_w}.array")
         print(f"cache_file path: {cache_file}")
         if not os.path.exists(cache_file):
             logger.info("Caching images for the first time. This might take about 20 minutes for COCO")
