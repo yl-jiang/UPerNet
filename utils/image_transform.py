@@ -401,6 +401,7 @@ def scale_jitting(img, seg, resize_shape=[320, 320] , dst_size=[224, 224]):
 
 def resize_segmentation(segmentation, new_shape, order=3, cval=0):
     '''
+    copy from: https://github.com/MIC-DKFZ/nnUNet
     Resizes a segmentation map. Supports all orders (see skimage documentation). Will transform segmentation map to one
     hot encoding which is resized and transformed back to a segmentation map.
     This prevents interpolation artifacts ([0, 0, 2] -> [0, 1, 2])
