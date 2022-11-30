@@ -5,17 +5,17 @@ import numpy as np
 __all__ = ["Metric"]
 
 
-def pixel_acc(pred_seg, gt_seg, ignore_index=-1):
+def pixel_acc(argmax_pred_seg, gt_seg, ignore_index=-1):
     """
     Inputs:
-        pred_seg: (bs, num_class, h, w)
-        gt_seg: (bs, h, w)
+        argmax_pred_seg: (bs, h, w) / ndarray
+        gt_seg: (bs, h, w) / ndarray
     """
-    _, preds = torch.max(pred_seg, dim=1)
-    valid = (gt_seg != ignore_index).long()
-    acc_sum = torch.sum(valid * (preds == gt_seg)).long()
-    pixel_sum = torch.sum(valid)
-    acc = acc_sum.float() / (pixel_sum.float() + 1e-10)
+    tpe = argmax_pred_seg.dtype
+    valid = (gt_seg != ignore_index).astype(tpe)
+    acc_sum = np.sum(valid * (argmax_pred_seg == gt_seg)).astype(tpe)
+    pixel_sum = np.sum(valid)
+    acc = acc_sum.astype(np.float32) / (pixel_sum.astype(np.float32) + 1e-10)
     return acc
 
 

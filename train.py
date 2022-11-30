@@ -352,7 +352,7 @@ class Training:
             outputs: (bs, 1, h, w)
             info:
         Outpus:
-            
+
         """
         assert isinstance(inp, np.ndarray)
         assert isinstance(inp, np.ndarray)
@@ -477,7 +477,7 @@ class Training:
             if self.hyp.get('model_save_dir', None) and Path(self.hyp['model_save_dir']).exists():
                 save_path = self.hyp['model_save_dir']
             else:
-                save_path = str(self.cwd / 'checkpoints' / f'every_{self.hyp["model_type"]}.pth')            
+                save_path = str(self.cwd / 'checkpoints' / f'every_upernet.pth')            
 
             if not Path(save_path).exists():
                 maybe_mkdir(Path(save_path).parent)
