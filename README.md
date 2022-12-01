@@ -59,4 +59,4 @@ Model Summary:  319 layers; 31349752 parameters; 31349752 gradients; 16.70868172
 
 ## 预测
 
-![](https://github.com/yl-jiang/UPerNet/blob/main/result/readme/prediction1.jpg)
+![](result/readme/prediction1.jpg)
