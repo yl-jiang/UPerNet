@@ -52,6 +52,7 @@ Model Summary:  319 layers; 31349752 parameters; 31349752 gradients; 16.70868172
 | model name   | download |   pwd |
 | :------------- | :----------: | ------------: |
 | cityspace        |    xxx     |         xxx |
+上面的预训练模型是使用CitySpace数据集train from scratch的。
 
 使用预训练权重训练自己的数据集：
 + 下载权重文件；

@@ -238,9 +238,7 @@ class Training:
                     cur_steps = per_epoch_iters * epoch + i + 1
                     img    = x['img'].to(self.data_type)  # (bn, 3, h, w)
                     gt_seg = x['seg'].to(self.data_type)  # (bn, num_class, h, w)
-                    # import pickle
-                    # pickle.dump(img.cpu().numpy(), open("./img.pkl", 'wb'))
-                    # pickle.dump(gt_seg.cpu().numpy(), open("./seg.pkl", 'wb'))
+                    
                     gt_seg.requires_grad = False
                     img, gt_seg = self.mutil_scale_training(img, gt_seg)
                     batchsz, inp_c, inp_h, inp_w = img.shape
@@ -253,7 +251,7 @@ class Training:
                         preds = self.model(img)
                         loss_dict = self.loss_fcn(preds, gt_seg)
 
-                    tot_loss = loss_dict['total']
+                    tot_loss = loss_dict['total'] * (self.hyp['batch_size'] / self.hyp['accumulate_loss_step'])
 
                     # backward
                     self.scaler.scale(tot_loss).backward()
