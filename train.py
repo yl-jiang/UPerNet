@@ -33,7 +33,7 @@ from utils import time_synchronize, summary_model
 from data import build_dataloader, build_testdataloader
 from utils import catch_warnnings
 from utils import Metric, save_seg, resize_segmentation
-from models import UPerNet
+from models import UPerNet, USquareNetTiny
 import gc
 
 
@@ -68,7 +68,8 @@ class Training:
         self.init_lr = self.hyp['init_lr']
         
         # model, optimizer, loss, lr_scheduler, ema
-        self.model = UPerNet(in_channel=3, num_class=self.hyp['num_class']).to(hyp['device'])
+        # self.model = UPerNet(in_channel=3, num_class=self.hyp['num_class']).to(hyp['device'])
+        self.model = USquareNetTiny(in_channel=3, num_class=self.hyp['num_class']).to(hyp['device'])
         ModelSummary(self.model, input_size=(1, 3, self.hyp['input_img_size'][0], self.hyp['input_img_size'][1]), device=self.hyp['device'])
         self.optimizer = self._init_optimizer()
         self.optim_scheduler = lr_scheduler.LambdaLR(optimizer=self.optimizer, lr_lambda=self._lr_lambda)
@@ -606,31 +607,31 @@ class Training:
 if __name__ == '__main__':
     from utils import print_config
     config_ = Config()
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, required=False, dest='cfg', help='path to config file')
-    parser.add_argument('--pretrained_model_path',default="", dest='pretrained_model_path') 
-    parser.add_argument('--batch_size', type=int, default=2, dest='batch_size')
-    parser.add_argument("--input_img_size", default=640, type=int, dest='input_img_size')
-    parser.add_argument('--train_img_dir', required=False, dest='train_img_dir', type=str)
-    parser.add_argument('--train_seg_dir', required=False, dest='train_lab_dir', type=str)
-    parser.add_argument('--val_img_dir', required=False, dest='val_img_dir', type=str)
-    parser.add_argument('--val_seg_dir', required=False, dest='val_lab_dir', type=str)
-    parser.add_argument('--test_img_dir', required=False, dest='test_img_dir', type=str)
-    parser.add_argument('--model_save_dir', default="", type=str, dest='model_save_dir')
-    parser.add_argument('--log_save_path', default="", type=str, dest="log_save_path")
-    parser.add_argument('--aspect_ratio_path', default=None, dest='aspect_ratio_path', type=str, help="aspect ratio list for dataloader sampler, only support serialization object by pickle")
-    parser.add_argument('--cache_num', default=0, dest='cache_num', type=int)
-    parser.add_argument('--total_epoch', default=300, dest='total_epoch', type=int)
-    parser.add_argument('--do_warmup', default=True, type=bool, dest='do_warmup')
-    parser.add_argument('--use_tta', default=True, type=bool, dest='use_tta')
-    parser.add_argument('--optimizer', default='sgd', type=str, choices=['sgd', 'adam'], dest='optimizer')
-    parser.add_argument('--init_lr', default=0.01, type=float, dest='init_lr', help='initialization learning rate')
-    args = parser.parse_args()
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('--cfg', type=str, required=False, dest='cfg', help='path to config file')
+    # parser.add_argument('--pretrained_model_path',default="", dest='pretrained_model_path') 
+    # parser.add_argument('--batch_size', type=int, default=2, dest='batch_size')
+    # parser.add_argument("--input_img_size", default=640, type=int, dest='input_img_size')
+    # parser.add_argument('--train_img_dir', required=False, dest='train_img_dir', type=str)
+    # parser.add_argument('--train_seg_dir', required=False, dest='train_lab_dir', type=str)
+    # parser.add_argument('--val_img_dir', required=False, dest='val_img_dir', type=str)
+    # parser.add_argument('--val_seg_dir', required=False, dest='val_lab_dir', type=str)
+    # parser.add_argument('--test_img_dir', required=False, dest='test_img_dir', type=str)
+    # parser.add_argument('--model_save_dir', default="", type=str, dest='model_save_dir')
+    # parser.add_argument('--log_save_path', default="", type=str, dest="log_save_path")
+    # parser.add_argument('--aspect_ratio_path', default=None, dest='aspect_ratio_path', type=str, help="aspect ratio list for dataloader sampler, only support serialization object by pickle")
+    # parser.add_argument('--cache_num', default=0, dest='cache_num', type=int)
+    # parser.add_argument('--total_epoch', default=300, dest='total_epoch', type=int)
+    # parser.add_argument('--do_warmup', default=True, type=bool, dest='do_warmup')
+    # parser.add_argument('--use_tta', default=True, type=bool, dest='use_tta')
+    # parser.add_argument('--optimizer', default='sgd', type=str, choices=['sgd', 'adam'], dest='optimizer')
+    # parser.add_argument('--init_lr', default=0.01, type=float, dest='init_lr', help='initialization learning rate')
+    # args = parser.parse_args()
 
-    # class Args:
-    #     def __init__(self) -> None:
-    #         self.cfg = "./config/train.yaml"
-    # args = Args()
+    class Args:
+        def __init__(self) -> None:
+            self.cfg = "./config/train.yaml"
+    args = Args()
 
     hyp = config_.get_config(args.cfg, args)
     formated_config = print_config(hyp)
