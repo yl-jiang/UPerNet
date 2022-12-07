@@ -49,9 +49,10 @@ Model Summary:  319 layers; 31349752 parameters; 31349752 gradients; 16.70868172
 ```
 
 ### 预训练权重
-| model name   | download |   pwd |
-| :------------- | :----------: | ------------: |
-| cityspace        |    xxx     |         xxx |
+| model                        | download     |   pwd         |
+| :----------------------------| :----------: | ------------: |
+| uperner for cityspace        |    xxx       |         xxx   |
+| usquare_tiny for cityspace   |    xxx       |         xxx   |
 
 上面的预训练模型是使用CitySpace数据集train from scratch的。
 
@@ -60,10 +61,10 @@ Model Summary:  319 layers; 31349752 parameters; 31349752 gradients; 16.70868172
 + 编辑UPerNet/config/train.yaml文件，将```pretrained_model_path```配置项设置为预训练权重的文件路径；
 
 ## 预测
-### UPerNet
+### UPerNet (1000 epoch, from scratch)
 ![](result/readme/prediction_upernet.jpg)
 
-### USquareNet
+### USquareNet (1000 epoch, from scratch)
 ![](result/readme/prediction_usquaretiny.jpg)
 
 
