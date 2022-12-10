@@ -3,11 +3,11 @@ loss_hyp:
 
 train_hyp:
   pretrained_model_path: ""  # 预训练模型路径
-  train_img_dir: "/home/uih/JYL/Dataset/Segmentation/cityscapes/image/train/"  # 存放训练图像的文件夹路径
-  train_seg_dir: "/home/uih/JYL/Dataset/Segmentation/cityscapes/label/train/"  # 存放训练label的文件夹路径
+  train_img_dir: "xxx/Dataset/Segmentation/cityscapes/image/train/"  # 存放训练图像的文件夹路径
+  train_seg_dir: "xxx/Dataset/Segmentation/cityscapes/label/train/"  # 存放训练label的文件夹路径
   test_img_dir: "./data/testimage"  # for test
-  val_img_dir: "/home/uih/JYL/Dataset/Segmentation/cityscapes/image/val/"  # validation image dir
-  val_seg_dir: "/home/uih/JYL/Dataset/Segmentation/cityscapes/label/val/"  # validation label dir
+  val_img_dir: "xxx/Dataset/Segmentation/cityscapes/image/val/"  # validation image dir
+  val_seg_dir: "xxx/Dataset/Segmentation/cityscapes/label/val/"  # validation label dir
   cache_num: 5000
   input_img_size:  # 输入训练网络的图片大小
     - 448
