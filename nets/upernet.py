@@ -52,7 +52,7 @@ class ConvBnAct(nn.Module):
     def __init__(self, in_channel, out_channel, kernel, stride, padding, dilation=1, bias=False, act=True):
         super(ConvBnAct, self).__init__()
         self.conv = nn.Conv2d(in_channel, out_channel, kernel, stride, padding=padding, dilation=dilation, bias=bias)
-        self.bn = nn.BatchNorm2d(out_channel, momentum=0.001)  # if use gradient accumulation then set a small momentum of BN
+        self.bn = nn.BatchNorm2d(out_channel)
         self.act = nn.SiLU(inplace=True) if act else nn.Identity()
 
     def forward(self, x):

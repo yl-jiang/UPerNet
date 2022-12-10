@@ -405,9 +405,15 @@ def resize_segmentation(segmentation, new_shape, order=3, cval=0):
     Resizes a segmentation map. Supports all orders (see skimage documentation). Will transform segmentation map to one
     hot encoding which is resized and transformed back to a segmentation map.
     This prevents interpolation artifacts ([0, 0, 2] -> [0, 1, 2])
-    :param segmentation:
+    :param segmentation: (H, W)
     :param new_shape: [h, w]
     :param order: 3 is Bi-cubic
+        0: Nearest-neighbor
+        1: Bi-linear (default)
+        2: Bi-quadratic
+        3: Bi-cubic
+        4: Bi-quartic
+        5: Bi-quintic
     :return:
     '''
     tpe = segmentation.dtype

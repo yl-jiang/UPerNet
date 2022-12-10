@@ -3,62 +3,21 @@ import torch
 from torch.utils.data import DataLoader as TorchDataLoader
 from pathlib import Path
 import cv2
-from utils import *
+from utils import fixed_imgsize_collector, InfiniteSampler
 from functools import partial
-from torch.utils.data import Sampler
 import torch.distributed as dist
 from torch.utils.data.sampler import BatchSampler as TorchBatchSampler
-import itertools
 import numpy as np
 from loguru import logger
 import os
-import random
-import uuid
 from functools import wraps
 from torch.utils.data import Dataset as TorchDataset
 import numbers
+from utils import wait_for_the_master, worker_init_reset_seed, letter_resize
+from utils import RandomShift, RandomBrightness, RandomFlipLR, RandomFlipUD, RandomBlur, RandomCrop, RandomCutout, RandomHSV, RandomSaturation, RandomPerspective
 
 
-__all__ = ["fixed_imgsize_collector", "CitySpaceDataset", "CitySpaceBatchSampler", 
-           "InfiniteSampler", "CitySpaceDataLoader", "DataPrefetcher", "build_dataloader", 
-           "Transforms"]
-
-    
-def normal_normalization(img):
-    norm_img = torch.from_numpy(img / (np.max(img) + 1e-8)).permute(2, 0, 1).contiguous()
-    return norm_img
-
-
-def fixed_imgsize_collector(data_in, dst_size):
-    """
-    将Dataset中__getitem__方法返回的每个值进行进一步组装。
-
-    :param data_in: tuple, data[0] is image, data[1] is seg, data[2] is image's id
-    :param dst_size: [h, w]
-    :return: dictionary
-    """
-    # 输入图像的格式为(h,w,3)
-    assert data_in[0][0].ndim == 3 and data_in[0][0].shape[-1] == 3, f"data's formate should be (h, w, 3), but got {data_in[0].shape}"
-    
-    batch_size = len(data_in)
-    imgs = [d[0] for d in data_in]
-    segs = [d[1] for d in data_in]
-    img_ids = [d[2] for d in data_in]
-
-    # batch内image的图像拥有相同的shape, batch之间image的shape不一样
-    # dst_size = padding(dst_size, 32)
-    imgs_out = torch.zeros(batch_size, 3, dst_size[0], dst_size[1])
-    segs_out = torch.zeros(batch_size, 1, dst_size[0], dst_size[1])
-
-    for b in range(batch_size):
-        img = imgs[b]  # ndarray
-        seg = segs[b] 
-        if img.shape[0] != dst_size[0] or img.shape[1] != dst_size[1]:
-            img, seg = letter_resize(img, seg, dst_size)
-        imgs_out[b] = normal_normalization(img)
-        segs_out[b] = torch.from_numpy(seg.copy()).permute(2, 0, 1).contiguous()
-
-    return {'img': imgs_out, 'seg': segs_out, 'id': np.asarray(img_ids)}
+__all__ = ["build_train_dataloader", "build_val_dataloader"]
 
 
 class Transforms:
@@ -187,16 +146,16 @@ class CitySpaceDataset(Dataset):
             "\n********************************************************************************\n"
             "You are using cached images in RAM to accelerate training.\n"
             "This requires large system RAM.\n"
-            "Make sure you have 200G+ RAM and 136G available disk space for training COCO.\n"
+            "Make sure you have 16G+ RAM and 6G available disk space for training COCO.\n"
             "********************************************************************************\n"
         )
         max_h = self.input_dim[0]
         max_w = self.input_dim[1]
         
-        cache_file = os.path.join(str(Path(self.img_dir).parent), f"img_resized_cache_h{max_h}_w{max_w}.array")
+        cache_file = os.path.join(str(Path(self.img_dir).parent), f"img_{Path(self.img_dir).name}_resized_cache_h{max_h}_w{max_w}.array")
         print(f"cache_file path: {cache_file}")
         if not os.path.exists(cache_file):
-            logger.info("Caching images for the first time. This might take about 20 minutes for COCO")
+            logger.info("Caching images for the first time. This might take about 10 minutes for CitySpace")
             self.imgs = np.memmap(
                 cache_file,
                 shape=(self.cache_num, max_h, max_w, 4),
@@ -239,12 +198,11 @@ class CitySpaceDataset(Dataset):
             seg_p = self.db_seg[index]
             img_arr = cv2.imread(str(img_p))  # (h, w, 3)
             seg_arr = cv2.imread(str(seg_p), 0)[:, :, None]  # (h, w, 1)
-
-        # cityspace数据集中的背景类mask值为255, 将背景类的mask修改为0
-        if len(seg_arr[seg_arr == 255]) > 0:
+            # cityspace数据集中的背景类mask值为255, 将背景类的mask修改为0
             bg_mask = seg_arr == 255
             seg_arr += 1
             seg_arr[bg_mask] = 0
+            img_arr, seg_arr = letter_resize(img_arr, seg_arr, self.input_dim)
 
         return img_arr, seg_arr
 
@@ -272,62 +230,6 @@ class CitySpaceBatchSampler(TorchBatchSampler):
     def __iter__(self):
         for batch in super().__iter__():
             yield [(self.enable_data_aug, idx) for idx in batch]
-
-
-class InfiniteSampler(Sampler):
-    """
-    In training, we only care about the "infinite stream" of training data.
-    So this sampler produces an infinite stream of indices and
-    all workers cooperate to correctly shuffle the indices and sample different indices.
-    The samplers in each worker effectively produces `indices[worker_id::num_workers]`
-    where `indices` is an infinite stream of indices consisting of
-    `shuffle(range(size)) + shuffle(range(size)) + ...` (if shuffle is True)
-    or `range(size) + range(size) + ...` (if shuffle is False)
-    """
-
-    def __init__(
-        self,
-        size: int,
-        shuffle: bool = True,
-        seed = 0,
-        rank=0,
-        world_size=1,
-    ):
-        """
-        Args:
-            size (int): the total number of data of the underlying dataset to sample from
-            shuffle (bool): whether to shuffle the indices or not
-            seed (int): the initial seed of the shuffle. Must be the same
-                across all workers. If None, will use a random seed shared
-                among workers (require synchronization among all workers).
-        """
-        self._size = size
-        assert size > 0
-        self._shuffle = shuffle
-        self._seed = int(seed)
-
-        if dist.is_available() and dist.is_initialized():
-            self._rank = dist.get_rank()
-            self._world_size = dist.get_world_size()
-        else:
-            self._rank = rank
-            self._world_size = world_size
-
-    def __iter__(self):
-        start = self._rank
-        yield from itertools.islice(self._infinite_indices(), start, None, self._world_size)
-
-    def _infinite_indices(self):
-        g = torch.Generator()
-        g.manual_seed(self._seed)
-        while True:
-            if self._shuffle:
-                yield from torch.randperm(self._size, generator=g)
-            else:
-                yield from torch.arange(self._size)
-
-    def __len__(self):
-        return self._size // self._world_size
 
 
 class CitySpaceDataLoader(TorchDataLoader):
@@ -360,13 +262,6 @@ class CitySpaceDataLoader(TorchDataLoader):
         self.batch_sampler.enable_data_aug = False
 
 
-def worker_init_reset_seed(worker_id):
-    seed = uuid.uuid4().int % 2**32
-    random.seed(seed)
-    torch.set_rng_state(torch.manual_seed(seed).get_state())
-    np.random.seed(seed)
-
-
 class DataPrefetcher:
     """
     DataPrefetcher is inspired by code of following file:
@@ -385,10 +280,11 @@ class DataPrefetcher:
     def preload(self):
         try:
             out_dict = next(self.loader)
-            self.next_input, self.next_target, _ = out_dict["img"], out_dict["seg"], out_dict['id']
+            self.next_input, self.next_target, self.next_img_id = out_dict["img"], out_dict["seg"], out_dict['id']
         except StopIteration:
             self.next_input = None
             self.next_target = None
+            self.next_img_id = None
             return
 
         with torch.cuda.stream(self.stream):
@@ -399,12 +295,13 @@ class DataPrefetcher:
         torch.cuda.current_stream().wait_stream(self.stream)
         input = self.next_input
         target = self.next_target
+        img_id = self.next_img_id
         if input is not None:
             self.record_stream(input)
         if target is not None:
             target.record_stream(torch.cuda.current_stream())
         self.preload()
-        return {'img':input, 'seg':target}
+        return {'img':input, 'seg':target, 'id': img_id}
 
     def _input_cuda_for_image(self):
         self.next_input = self.next_input.cuda(non_blocking=True)
@@ -414,22 +311,29 @@ class DataPrefetcher:
         input.record_stream(torch.cuda.current_stream())
 
 
-def build_dataloader(img_dir, seg_dir, data_aug_hyp,
-                     batch_size=16, 
-                     drop_last=False, 
-                     dst_size=None, 
-                     enable_data_aug=True, 
-                     num_workers=0, 
-                     pin_memory=True, 
-                     seed=42, 
-                     cache_num=0):
-    if dist.is_available() and dist.is_initialized():
-        batch_size = batch_size // dist.get_world_size()
+def build_train_dataloader(
+                            img_dir, seg_dir, 
+                            data_aug_hyp,
+                            batch_size=16, 
+                            drop_last=False, 
+                            dst_size=None, 
+                            enable_data_aug=True, 
+                            num_workers=0, 
+                            pin_memory=True, 
+                            seed=42, 
+                            cache_num=0):
+
     if enable_data_aug:
         transform = Transforms(data_aug_hyp)
     else:
         transform = None
-    dataset = CitySpaceDataset(img_dir, seg_dir, dst_size, enable_data_aug, transform=transform, cache_num=cache_num)
+    
+    with wait_for_the_master():
+        dataset = CitySpaceDataset(img_dir, seg_dir, dst_size, enable_data_aug, transform=transform, cache_num=cache_num)
+    
+    if dist.is_available() and dist.is_initialized():
+        batch_size = batch_size // dist.get_world_size()
+
     sampler = InfiniteSampler(len(dataset), seed=seed if seed else 0)
     batch_sampler = CitySpaceBatchSampler(sampler=sampler, batch_size=batch_size, drop_last=drop_last, enable_data_aug=enable_data_aug)
     dataloader_kwargs = {"num_workers": num_workers, 
@@ -438,6 +342,32 @@ def build_dataloader(img_dir, seg_dir, data_aug_hyp,
                          "worker_init_fn": worker_init_reset_seed,
                          "collate_fn": partial(fixed_imgsize_collector, dst_size=dataset.input_dim)
                         }
+
+    dataloader = CitySpaceDataLoader(dataset, **dataloader_kwargs)
+    if torch.cuda.is_available():
+        prefetcher = DataPrefetcher(dataloader)
+    else:
+        prefetcher = None
+
+    return dataset, iter(dataloader), prefetcher
+
+
+def build_val_dataloader(img_dir, seg_dir, dst_size, batch_size, seed=0, drop_last=False, cache_num=0, num_workers=6):    
+    with wait_for_the_master():
+        dataset = CitySpaceDataset(img_dir, seg_dir, dst_size, enable_data_aug=False, transform=None, cache_num=cache_num)
+    
+    if dist.is_available() and dist.is_initialized():
+        batch_size = batch_size // dist.get_world_size()
+
+    sampler = InfiniteSampler(len(dataset), seed=seed if seed else 0)
+    batch_sampler = CitySpaceBatchSampler(sampler=sampler, batch_size=batch_size, drop_last=drop_last, enable_data_aug=False)
+    dataloader_kwargs = {"num_workers": num_workers, 
+                         "pin_memory": True, 
+                         "batch_sampler": batch_sampler, 
+                         "worker_init_fn": worker_init_reset_seed,
+                         "collate_fn": partial(fixed_imgsize_collector, dst_size=dataset.input_dim)
+                        }
+
     dataloader = CitySpaceDataLoader(dataset, **dataloader_kwargs)
     if torch.cuda.is_available():
         prefetcher = DataPrefetcher(dataloader)

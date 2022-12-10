@@ -17,7 +17,7 @@ from config import Config
 from utils import maybe_mkdir
 from data import build_testdataloader
 from utils import save_seg
-from models import USquareNet
+from nets import USquareNet
 import gc
 
 

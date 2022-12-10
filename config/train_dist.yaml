@@ -8,37 +8,43 @@ train_hyp:
   test_img_dir: "./data/testimage"  # for test
   val_img_dir: "/home/uih/JYL/Dataset/Segmentation/cityscapes/image/val/"  # validation image dir
   val_seg_dir: "/home/uih/JYL/Dataset/Segmentation/cityscapes/label/val/"  # validation label dir
-  cache_num: 5000
+  cache_num: 100000
   input_img_size:  # 输入训练网络的图片大小
     - 448
     - 448
-  batch_size: 8
+  batch_size: 16
   drop_last: false  # Pytorch DataLoader中的参数
   pin_memory: true  # Pytorch DataLoader中的参数
   shuffle: true  # Pytorch DataLoader中的参数
-  num_workers: 4  # Pytorch DataLoader中的参数
+  num_workers: 0  # Pytorch DataLoader中的参数
   total_epoch: 1000
   device: "gpu"  # 是否使用GPU进行训练['gpu' or 'cpu']
-  accu_batch_size: 48  # 累积梯度下降
-  do_ema: true  # 是否维持一个Everage Moving Model
+  accumulate_step: 8  # 累积梯度下降
+  do_model_ema: true  # 是否维持一个Everage Moving Model
+  inference_every: 1  # 每隔多少个epoch validate一次
+  show_tbar_every: 1  # 每个多少个step显示实时训练状态信息
   use_tta_when_val: false  # validation时是否使用TTA
+  save_log: true  # 是否保存log文件
   mutil_scale_training: false  # 是否使用多尺度训练
+  current_work_dir: null  # 当前工作目录（可以不设置）
+  calculate_metric_every: 1000  # 每个多少个epoch计算一次iou
+  save_ckpt_every: 1  # 每隔多少个epoch保存一次模型
   enable_tensorboard: true
   enable_data_aug: true
-  random_seed: 7
+  random_seed: 42
   fp16: false
-  inference_every: 10  # 每隔多少个epoch validate一次
-  show_tbar_every: 5  # 每个多少个step显示实时训练状态信息
-  save_ckpt_every: 10  # 每隔多少个epoch保存一次模型
-  calculate_metric_every: 10  # 每个多少个epoch计算一次iou
+  mix_precision_training: false
+  num_class: 20
+  save_optimizer: true
 
 optimizer_hyp:
-  optimizer: 'sgd' # 优化器类别/['sgd' or 'adam']
-  basic_lr_per_img: 0.000625  # 0.01 / 16
+  optimizer_type: 'sgd' # 优化器类别/['sgd' or 'adam']
+  basic_lr_per_img: 0.01  # 0.01 / 16
   weight_decay: 0.0
-  momentum: 0.9
+  optimizer_momentum: 0.9
   eps: 0.00000001
   lr_scheculer_bias: 0.1
+  scheduler_type: 'linear'
 
 warm_up:
   do_warmup: true  # 是否开启预热训练
@@ -46,7 +52,7 @@ warm_up:
   warmup_bias_lr: 0.1
   warmup_momentum: 0.8
 
-data_hyp:
+data_aug_hyp:
   data_aug_saturation_p: 0.1
   data_aug_shift_p: 0.1
   data_aug_crop_p: 0.1

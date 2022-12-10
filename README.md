@@ -49,11 +49,9 @@ Model Summary:  319 layers; 31349752 parameters; 31349752 gradients; 16.70868172
 ```
 
 ### 预训练权重
-| model                        | download     |   pwd         |
-| :----------------------------| :----------: | ------------: |
-| uperner for cityspace        |    xxx       |         xxx   |
-| usquare_tiny for cityspace   |    xxx       |         xxx   |
-
+| model name   | download |   pwd |
+| :------------- | :----------: | ------------: |
+| cityspace        |    xxx     |         xxx |
 上面的预训练模型是使用CitySpace数据集train from scratch的。
 
 使用预训练权重训练自己的数据集：
@@ -61,10 +59,8 @@ Model Summary:  319 layers; 31349752 parameters; 31349752 gradients; 16.70868172
 + 编辑UPerNet/config/train.yaml文件，将```pretrained_model_path```配置项设置为预训练权重的文件路径；
 
 ## 预测
-### UPerNet (1000 epoch, from scratch)
-![](result/readme/prediction_upernet.jpg)
 
-### USquareNet (1000 epoch, from scratch)
-![](result/readme/prediction_usquaretiny.jpg)
+![](result/readme/prediction1.jpg)
 
-
+## 碎碎念
+对于cityspace数据集，使用USquareNet，单纯使用BCELoss作为损失函数时收敛非常慢，实践结果表明损失函数中加入CrossEntropyLoss是更好的选择。

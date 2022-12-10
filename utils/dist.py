@@ -5,285 +5,287 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
-import errno
+
 import os
+import functools
+import os
+import pickle
+import time
+from contextlib import contextmanager
+from loguru import logger
+
+import numpy as np
+
+__all__ = [
+    "get_num_devices",
+    "wait_for_the_master",
+    "is_main_process",
+    "synchronize",
+    "get_world_size",
+    "get_rank",
+    "get_local_rank",
+    "get_local_size",
+    "time_synchronized",
+    "gather",
+    "all_gather",
+    "torch_distributed_zero_first", 
+]
+
+_LOCAL_PROCESS_GROUP = None
 
 
-class SmoothedValue(object):
-    """Track a series of values and provide access to smoothed values over a
-    window or the global series average.
+def get_num_devices():
+    gpu_list = os.getenv('CUDA_VISIBLE_DEVICES', None)
+    if gpu_list is not None:
+        return len(gpu_list.split(','))
+    else:
+        devices_list_info = os.popen("nvidia-smi -L")
+        devices_list_info = devices_list_info.read().strip().split("\n")
+        return len(devices_list_info)
+
+
+@contextmanager
+def wait_for_the_master(local_rank: int = None):
     """
+    Make all processes waiting for the master to do some task.
 
-    def __init__(self, window_size=20, fmt=None):
-        if fmt is None:
-            fmt = "{value:.4f} ({global_avg:.4f})"
-        self.deque = deque(maxlen=window_size)
-        self.total = 0.0
-        self.count = 0
-        self.fmt = fmt
-
-    def update(self, value, n=1):
-        self.deque.append(value)
-        self.count += n
-        self.total += value * n
-
-    def synchronize_between_processes(self):
-        """
-        Warning: does not synchronize the deque!
-        """
-        if not is_dist_avail_and_initialized():
-            return
-        t = torch.tensor([self.count, self.total], dtype=torch.float64, device='cuda')
-        dist.barrier()
-        dist.all_reduce(t)
-        t = t.tolist()
-        self.count = int(t[0])
-        self.total = t[1]
-
-    @property
-    def median(self):
-        d = torch.tensor(list(self.deque))
-        return d.median().item()
-
-    @property
-    def avg(self):
-        d = torch.tensor(list(self.deque), dtype=torch.float32)
-        return d.mean().item()
-
-    @property
-    def global_avg(self):
-        return self.total / self.count
-
-    @property
-    def max(self):
-        return max(self.deque)
-
-    @property
-    def value(self):
-        return self.deque[-1]
-
-    def __str__(self):
-        return self.fmt.format(
-            median=self.median,
-            avg=self.avg,
-            global_avg=self.global_avg,
-            max=self.max,
-            value=self.value)
-
-
-def all_gather(data):
-    """
-    收集各个进程中的数据
-    Run all_gather on arbitrary picklable data (not necessarily tensors)
     Args:
-        data: any picklable object
-    Returns:
-        list[data]: list of data gathered from each rank
+        local_rank (int): the rank of the current process. Default to None. If None, it will use the rank of the current process.
     """
-    world_size = get_world_size()  # 进程数
-    if world_size == 1:
-        return [data]
+    if local_rank is None:
+        local_rank = get_local_rank()
 
-    data_list = [None] * world_size
-    dist.all_gather_object(data_list, data)
-
-    return data_list
-
-
-class MeanAbsoluteError(object):
-    def __init__(self):
-        self.mae_list = []
-
-    def update(self, pred: torch.Tensor, gt: torch.Tensor):
-        batch_size, c, h, w = gt.shape
-        assert batch_size == 1, f"validation mode batch_size must be 1, but got batch_size: {batch_size}."
-        resize_pred = F.interpolate(pred, (h, w), mode="bilinear", align_corners=False)
-        error_pixels = torch.sum(torch.abs(resize_pred - gt), dim=(1, 2, 3)) / (h * w)
-        self.mae_list.extend(error_pixels.tolist())
-
-    def compute(self):
-        mae = sum(self.mae_list) / len(self.mae_list)
-        return mae
-
-    def gather_from_all_processes(self):
-        if not torch.distributed.is_available():
+    if local_rank > 0:
+        dist.barrier()
+    yield
+    if local_rank == 0:
+        if not dist.is_available():
             return
-        if not torch.distributed.is_initialized():
+        if not dist.is_initialized():
             return
-        torch.distributed.barrier()
-        gather_mae_list = []
-        for i in all_gather(self.mae_list):
-            gather_mae_list.extend(i)
-        self.mae_list = gather_mae_list
-
-    def __str__(self):
-        mae = self.compute()
-        return f'MAE: {mae:.3f}'
-
-
-class MetricLogger(object):
-    def __init__(self, delimiter="\t"):
-        self.meters = defaultdict(SmoothedValue)
-        self.delimiter = delimiter
-
-    def update(self, **kwargs):
-        for k, v in kwargs.items():
-            if isinstance(v, torch.Tensor):
-                v = v.item()
-            assert isinstance(v, (float, int))
-            self.meters[k].update(v)
-
-    def __getattr__(self, attr):
-        if attr in self.meters:
-            return self.meters[attr]
-        if attr in self.__dict__:
-            return self.__dict__[attr]
-        raise AttributeError("'{}' object has no attribute '{}'".format(
-            type(self).__name__, attr))
-
-    def __str__(self):
-        loss_str = []
-        for name, meter in self.meters.items():
-            loss_str.append(
-                "{}: {}".format(name, str(meter))
-            )
-        return self.delimiter.join(loss_str)
-
-    def synchronize_between_processes(self):
-        for meter in self.meters.values():
-            meter.synchronize_between_processes()
-
-    def add_meter(self, name, meter):
-        self.meters[name] = meter
-
-    def log_every(self, iterable, print_freq, header=None):
-        i = 0
-        if not header:
-            header = ''
-        start_time = time.time()
-        end = time.time()
-        iter_time = SmoothedValue(fmt='{avg:.4f}')
-        data_time = SmoothedValue(fmt='{avg:.4f}')
-        space_fmt = ':' + str(len(str(len(iterable)))) + 'd'
-        if torch.cuda.is_available():
-            log_msg = self.delimiter.join([
-                header,
-                '[{0' + space_fmt + '}/{1}]',
-                'eta: {eta}',
-                '{meters}',
-                'time: {time}',
-                'data: {data}',
-                'max mem: {memory:.0f}'
-            ])
         else:
-            log_msg = self.delimiter.join([
-                header,
-                '[{0' + space_fmt + '}/{1}]',
-                'eta: {eta}',
-                '{meters}',
-                'time: {time}',
-                'data: {data}'
-            ])
-        MB = 1024.0 * 1024.0
-        for obj in iterable:
-            data_time.update(time.time() - end)
-            yield obj
-            iter_time.update(time.time() - end)
-            if i % print_freq == 0:
-                eta_seconds = iter_time.global_avg * (len(iterable) - i)
-                eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
-                if torch.cuda.is_available():
-                    print(log_msg.format(
-                        i, len(iterable), eta=eta_string,
-                        meters=str(self),
-                        time=str(iter_time), data=str(data_time),
-                        memory=torch.cuda.max_memory_allocated() / MB))
-                else:
-                    print(log_msg.format(
-                        i, len(iterable), eta=eta_string,
-                        meters=str(self),
-                        time=str(iter_time), data=str(data_time)))
-            i += 1
-            end = time.time()
-        total_time = time.time() - start_time
-        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        print('{} Total time: {}'.format(header, total_time_str))
+            dist.barrier()
 
 
-def mkdir(path):
-    try:
-        os.makedirs(path)
-    except OSError as e:
-        if e.errno != errno.EEXIST:
-            raise
-
-
-def setup_for_distributed(is_master):
+def synchronize():
     """
-    This function disables printing when not in master process
+    Helper function to synchronize (barrier) among all processes when using distributed training
     """
-    import builtins as __builtin__
-    builtin_print = __builtin__.print
-
-    def print(*args, **kwargs):
-        force = kwargs.pop('force', False)
-        if is_master or force:
-            builtin_print(*args, **kwargs)
-
-    __builtin__.print = print
-
-
-def is_dist_avail_and_initialized():
     if not dist.is_available():
-        return False
+        return
     if not dist.is_initialized():
-        return False
-    return True
+        return
+    world_size = dist.get_world_size()
+    if world_size == 1:
+        return
+    dist.barrier()
 
 
-def get_world_size():
-    if not is_dist_avail_and_initialized():
+def get_world_size() -> int:
+    if not dist.is_available():
+        return 1
+    if not dist.is_initialized():
         return 1
     return dist.get_world_size()
 
 
-def get_rank():
-    if not is_dist_avail_and_initialized():
+def get_rank() -> int:
+    if not dist.is_available():
+        return 0
+    if not dist.is_initialized():
         return 0
     return dist.get_rank()
 
 
-def is_main_process():
+def get_local_rank() -> int:
+    """
+    Returns:
+        The rank of the current process within the local (per-machine) process group.
+    """
+    if _LOCAL_PROCESS_GROUP is None:
+        return get_rank()
+
+    if not dist.is_available():
+        return 0
+    if not dist.is_initialized():
+        return 0
+    return dist.get_rank(group=_LOCAL_PROCESS_GROUP)
+
+
+def get_local_size() -> int:
+    """
+    Returns:
+        The size of the per-machine process group, i.e. the number of processes per machine.
+    """
+    if not dist.is_available():
+        return 1
+    if not dist.is_initialized():
+        return 1
+    return dist.get_world_size(group=_LOCAL_PROCESS_GROUP)
+
+
+def is_main_process() -> bool:
     return get_rank() == 0
 
 
-def save_on_master(*args, **kwargs):
-    if is_main_process():
-        torch.save(*args, **kwargs)
-
-
-def init_distributed_mode(args):
-    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-        args.rank = int(os.environ["RANK"])
-        args.world_size = int(os.environ['WORLD_SIZE'])
-        args.gpu = int(os.environ['LOCAL_RANK'])
-    elif 'SLURM_PROCID' in os.environ:
-        args.rank = int(os.environ['SLURM_PROCID'])
-        args.gpu = args.rank % torch.cuda.device_count()
-    elif hasattr(args, "rank"):
-        pass
+@functools.lru_cache()
+def _get_global_gloo_group():
+    """
+    Return a process group based on gloo backend, containing all the ranks
+    The result is cached.
+    """
+    if dist.get_backend() == "nccl":
+        return dist.new_group(backend="gloo")
     else:
-        print('Not using distributed mode')
-        args.distributed = False
-        return
+        return dist.group.WORLD
 
-    args.distributed = True
 
-    torch.cuda.set_device(args.gpu)
-    args.dist_backend = 'nccl'
-    print('| distributed init (rank {}): {}'.format(args.rank, args.dist_url), flush=True)
-    torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank)
-    setup_for_distributed(args.rank == 0)
+def _serialize_to_tensor(data, group):
+    backend = dist.get_backend(group)
+    assert backend in ["gloo", "nccl"]
+    device = torch.device("cpu" if backend == "gloo" else "cuda")
+
+    buffer = pickle.dumps(data)
+    if len(buffer) > 1024 ** 3:
+        logger.warning("Rank {} trying to all-gather {:.2f} GB of data on device {}".format(get_rank(), len(buffer) / (1024 ** 3), device))
+    storage = torch.ByteStorage.from_buffer(buffer)
+    tensor = torch.ByteTensor(storage).to(device=device)
+    return tensor
+
+
+def _pad_to_largest_tensor(tensor, group):
+    """
+    Returns:
+        list[int]: size of the tensor, on each rank
+        Tensor: padded tensor that has the max size
+    """
+    world_size = dist.get_world_size(group=group)
+    assert (world_size >= 1), "comm.gather/all_gather must be called from ranks within the given group!"
+    local_size = torch.tensor([tensor.numel()], dtype=torch.int64, device=tensor.device)
+    size_list = [torch.zeros([1], dtype=torch.int64, device=tensor.device) for _ in range(world_size)]
+    dist.all_gather(size_list, local_size, group=group)
+    size_list = [int(size.item()) for size in size_list]
+
+    max_size = max(size_list)
+
+    # we pad the tensor because torch all_gather does not support
+    # gathering tensors of different shapes
+    if local_size != max_size:
+        padding = torch.zeros((max_size - local_size), dtype=torch.uint8, device=tensor.device)
+        tensor = torch.cat((tensor, padding), dim=0)
+    return size_list, tensor
+
+
+def all_gather(data, group=None):
+    """
+    Run all_gather on arbitrary picklable data (not necessarily tensors).
+
+    Args:
+        data: any picklable object
+        group: a torch process group. By default, will use a group which
+            contains all ranks on gloo backend.
+    Returns:
+        list[data]: list of data gathered from each rank
+    """
+    if get_world_size() == 1:
+        return [data]
+    if group is None:
+        group = _get_global_gloo_group()
+    if dist.get_world_size(group) == 1:
+        return [data]
+
+    tensor = _serialize_to_tensor(data, group)
+
+    size_list, tensor = _pad_to_largest_tensor(tensor, group)
+    max_size = max(size_list)
+
+    # receiving Tensor from all ranks
+    tensor_list = [
+        torch.empty((max_size,), dtype=torch.uint8, device=tensor.device)
+        for _ in size_list
+    ]
+    dist.all_gather(tensor_list, tensor, group=group)
+
+    data_list = []
+    for size, tensor in zip(size_list, tensor_list):
+        buffer = tensor.cpu().numpy().tobytes()[:size]
+        data_list.append(pickle.loads(buffer))
+
+    return data_list
+
+
+def gather(data, dst=0, group=None):
+    """
+    Run gather on arbitrary picklable data (not necessarily tensors).
+
+    Args:
+        data: any picklable object
+        dst (int): destination rank
+        group: a torch process group. By default, will use a group which
+            contains all ranks on gloo backend.
+
+    Returns:
+        list[data]: on dst, a list of data gathered from each rank. Otherwise,
+            an empty list.
+    """
+    if get_world_size() == 1:
+        return [data]
+
+    if group is None:
+        group = _get_global_gloo_group()
+        
+    if dist.get_world_size(group=group) == 1:
+        return [data]
+    rank = dist.get_rank(group=group)
+
+    tensor = _serialize_to_tensor(data, group)
+    size_list, tensor = _pad_to_largest_tensor(tensor, group)
+
+    # receiving Tensor from all ranks
+    if rank == dst:
+        max_size = max(size_list)
+        tensor_list = [torch.empty((max_size,), dtype=torch.uint8, device=tensor.device) for _ in size_list]
+        dist.gather(tensor, tensor_list, dst=dst, group=group)
+
+        data_list = []
+        for size, tensor in zip(size_list, tensor_list):
+            buffer = tensor.cpu().numpy().tobytes()[:size]
+            data_list.append(pickle.loads(buffer))
+        return data_list
+    else:
+        dist.gather(tensor, [], dst=dst, group=group)
+        return []
+
+
+def shared_random_seed():
+    """
+    Returns:
+        int: a random number that is the same across all workers.
+            If workers need a shared RNG, they can use this shared seed to
+            create one.
+    All workers must call this function, otherwise it will deadlock.
+    """
+    ints = np.random.randint(2 ** 31)
+    all_ints = all_gather(ints)
+    return all_ints[0]
+
+
+def time_synchronized():
+    """pytorch-accurate time"""
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    return time.time()
+
+
+from contextlib import contextmanager
+@contextmanager
+def torch_distributed_zero_first(rank):
+    if rank not in [-1, 0]:
+        torch.distributed.barrier()
+    yield
+    if rank == 0:
+        torch.distributed.barrier()
+
 
 
 if __name__ == "__main__":

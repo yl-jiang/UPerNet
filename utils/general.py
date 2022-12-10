@@ -5,14 +5,23 @@ from copy import deepcopy
 from pathlib import Path
 
 import torch
+import torch.nn as nn
 import numba
 import numpy as np
 import logging
 from tabulate import tabulate
 import pprint
 
-__all__ = ["catch_warnnings", "maybe_mkdir", "time_synchronize", "is_exists", "clear_dir", "summary_model", "print_config", "ExponentialMovingAverageModel"]
+__all__ = ["catch_warnnings", "maybe_mkdir", "time_synchronize", "is_exists", "clear_dir", "summary_model", "print_config", "ExponentialMovingAverageModel", "is_parallel"]
 
+
+def is_parallel(model):
+    """check if model is in parallel mode."""
+    parallel_type = (
+        nn.parallel.DataParallel,
+        nn.parallel.DistributedDataParallel,
+    )
+    return isinstance(model, parallel_type)
 
 def catch_warnnings(fn):
     def wrapper(instance):
@@ -44,7 +53,8 @@ def clear_dir(dirname):
         dirname = Path(dirname)
     if dirname.exists():
         shutil.rmtree(str(dirname), ignore_errors=True)  # shutil.rmtree会将传入的文件夹整个删除
-    dirname.mkdir(parents=True)
+    if not dirname.exists():
+        dirname.mkdir(parents=True)
 
 
 def summary_model(model, input_img_size=[640, 640], verbose=False, prefix=""):
@@ -107,3 +117,6 @@ class ExponentialMovingAverageModel:
                 if v.dtype.is_floating_point:
                     v *= decay_weight
                     v += (1 - decay_weight) * cur_state_dict[k].detach()
+
+
+
