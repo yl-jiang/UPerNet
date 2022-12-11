@@ -1,7 +1,9 @@
 # UPerNet
 ## Model Structure
 
-TODO
+UPerNet Segmentation Part
+![](readme/UPerNet.png)
+![](readme/net_utils.png)
 
 ## How to use
 
@@ -48,10 +50,17 @@ Model Summary:  319 layers; 31349752 parameters; 31349752 gradients; 16.70868172
 #    3         2.496        448        5.540e-03        0.000          91.6      : 100%|██████████████████| 186/186 [01:31<00:00,  2.03it/s]
 ```
 
+### performance
+| backbone       | dataset   |   dice  |  pixel accuracy |
+| ----------     | -------   | ------- | ------------    | 
+| resnet         | cityspace |         |                 |
+| usquarenet     | cityspace |         |                 |
+
 ### 预训练权重
 | model name   | download |   pwd |
 | :------------- | :----------: | ------------: |
 | cityspace        |    xxx     |         xxx |
+
 上面的预训练模型是使用CitySpace数据集train from scratch的。
 
 使用预训练权重训练自己的数据集：
@@ -60,7 +69,7 @@ Model Summary:  319 layers; 31349752 parameters; 31349752 gradients; 16.70868172
 
 ## 预测
 
-![](result/readme/prediction1.jpg)
+![](readme/prediction_upernet.jpg)
 
 ## 碎碎念
-对于cityspace数据集，使用USquareNet，单纯使用BCELoss作为损失函数时收敛非常慢，实践结果表明损失函数中加入CrossEntropyLoss是更好的选择。
+对于cityspace数据集，使用USquareNet，单纯使用BCELoss作为损失函数时收敛非常慢，实践表明在损失函数中加入CrossEntropyLoss是更好的选择。
