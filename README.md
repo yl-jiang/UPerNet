@@ -2,8 +2,8 @@
 ## Model Structure
 
 UPerNet Segmentation Part
-![](readme/UPerNet.png)
-![](readme/net_utils.png)
+![](readme/UPerNet.jpg)
+![](readme/net_utils.jpg)
 
 ## How to use
 
