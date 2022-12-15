@@ -138,15 +138,6 @@ class Training:
             w = (w // factor + 1) * factor
         return h, w
 
-    def _lr_lambda(self, epoch, scheduler_type='linear'):
-        lr_bias = self.hyp['lr_scheculer_bias']  # lr_bias越大lr的下降速度越慢,整个epoch跑完最后的lr值也越大
-        if scheduler_type == 'linear':
-            return (1 - epoch / (self.hyp['total_epoch'] - 1)) * (1. - lr_bias) + lr_bias
-        elif scheduler_type == 'cosine':
-            return ((1 + math.cos(epoch * math.pi / self.hyp['total_epoch'])) / 2) * (1. - lr_bias) + lr_bias  # cosine
-        else:
-            return math.pow(1 - epoch / self.hyp['total_epoch'], 0.9)
-
     def _init_optimizer(self, model):
         param_group_weight, param_group_bias, param_group_other = [], [], []
         for m in model.modules():
@@ -163,15 +154,17 @@ class Training:
             batch_size = self.hyp['batch_size']
         lr = self.basic_lr_per_img * batch_size
         
-        if self.hyp['optimizer'].lower() == "sgd":
-            optimizer = optim.SGD(params=param_group_other, lr=lr, nesterov=True, momentum=self.hyp['momentum'])
-        elif self.hyp['optimizer'].lower() == "adam":
-            optimizer = optim.Adam(params=param_group_other, lr=lr, betas=(self.hyp['momentum'], 0.999), eps=self.hyp['eps'])
+        if self.hyp['optimizer_type'].lower() == "sgd":
+            optimizer = optim.SGD(params=param_group_other, lr=lr, nesterov=True, momentum=self.hyp['optimizer_momentum'])
+        elif self.hyp['optimizer_type'].lower() == "adam":
+            optimizer = optim.Adam(params=param_group_other, lr=lr, betas=(self.hyp['optimizer_momentum'], 0.999), eps=self.hyp['eps'])
+        elif self.hyp['optimizer_type'].lower() == "adamw":
+            optimizer = optim.AdamW(params=param_group_other, lr=lr, betas=(self.hyp['optimizer_momentum'], 0.999), eps=self.hyp['eps'], weight_decay=0.0)
         else:
-            RuntimeError(f"Unkown optim_type {self.hyp['optimizer']}")
+            RuntimeError(f"Unkown optim_type {self.hyp['optimizer_type']}")
 
         optimizer.add_param_group({"params": param_group_weight, "weight_decay": self.hyp['weight_decay']})
-        optimizer.add_param_group({"params": param_group_bias})
+        optimizer.add_param_group({"params": param_group_bias, "weight_decay": 0.0})
 
         del param_group_weight, param_group_bias, param_group_other
         return optimizer
@@ -192,6 +185,19 @@ class Training:
             elif isinstance(m, (nn.LeakyReLU, nn.ReLU, nn.ReLU6)):
                 m.inplace = True
 
+    def _init_scheduler(self, optimizer, trainloader):
+        if self.hyp['scheduler_type'].lower() == "onecycle":   # onecycle lr scheduler
+            scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=0.01, epochs=self.hyp['total_epoch'], steps_per_epoch=len(trainloader), three_phase=True)
+        elif self.hyp['scheduler_type'].lower() == 'linear':  # linear lr scheduler
+            lr_bias = self.hyp['lr_scheculer_bias']
+            linear_lr = lambda epoch: (1 - epoch / (self.hyp['total_epoch'] - 1)) * (1. - lr_bias) + lr_bias  # lr_bias越大lr的下降速度越慢,整个epoch跑完最后的lr值也越大
+            scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=linear_lr)
+        else:  # consin lr scheduler
+            lr_bias = self.hyp['lr_scheculer_bias']
+            cosin_lr = lambda epoch: ((1 + math.cos(epoch * math.pi / self.hyp['total_epoch'])) / 2) * (1. - lr_bias) + lr_bias  # cosine
+            scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=cosin_lr)
+        return scheduler
+
     def before_train(self):
         occupy_mem(self.local_rank)
 
@@ -204,14 +210,11 @@ class Training:
         self.scaler = amp.GradScaler(enabled=self.use_cuda)  # mix precision training
         self.total_loss_meter  = AverageValueMeter()
         
-        # model, optimizer, lr_scheduler
         torch.cuda.set_device(self.local_rank)
-        # model = USquareNetExeriment(in_channel=3, num_class=self.hyp['num_class'])
-        # model = UPerNet(in_channel=3, num_class=self.hyp['num_class'])
-        model = UNet(in_channel=3, num_class=self.hyp['num_class'])
+        model = VNet(in_channel=3, num_class=self.hyp['num_class'])
         ModelSummary(model, input_size=(1, 3, self.hyp['input_img_size'][0], self.hyp['input_img_size'][1]), device=next(model.parameters()).device)
         self.optimizer    = self._init_optimizer(model)
-        self.lr_scheduler = lr_scheduler.LambdaLR(optimizer=self.optimizer, lr_lambda=self._lr_lambda)
+        self.lr_scheduler = self._init_scheduler(self.optimizer, self.traindataloader)
         if self.rank == 0:
             self.writer = SummaryWriter(log_dir=str(self.cwd / 'log'))
 
@@ -221,7 +224,6 @@ class Training:
         self.load_model(model, None, self.optimizer, self.lr_scheduler, self.scaler, 'cpu')
 
         # loss function
-        # self.loss_fcn = CrossEntropyAndBCELoss(num_class=self.hyp['num_class'])
         self.loss_fcn = CrossEntropyAndDiceLoss(num_class=self.hyp['num_class'])
 
         if self.is_distributed:
@@ -231,6 +233,28 @@ class Training:
         self.model = model
         self.metric = SegMetirc2D()
             
+    def warmup(self, epoch, tot_step):
+        lr_bias = self.hyp['lr_scheculer_bias']
+        linear_lr = lambda epoch: (1. - epoch / (self.hyp['total_epoch'] - 1.)) * (1. - lr_bias) + lr_bias  # lr_bias越大lr的下降速度越慢,整个epoch跑完最后的lr值也越大
+        if self.hyp['do_warmup'] and tot_step < self.hyp["warmup_steps"]:
+            self.accumulate = int(max(1, np.interp(tot_step,
+                                                   [0., self.hyp['warmup_steps']],
+                                                   [1, self.get_local_accumulate_step()]).round()))
+            # optimizer有3各param_group, 分别是parm_other, param_weight, param_bias
+            for j, para_g in enumerate(self.optimizer.param_groups):
+                if j != 2:  # param_other and param_weight(该部分参数的learning rate逐渐增大)
+                    para_g['lr'] = np.interp(tot_step,
+                                             [0., self.hyp['warmup_steps']],
+                                             [0., para_g['initial_lr'] * linear_lr(epoch)])
+                else:  # param_bias(该部分参数的learning rate逐渐减小,因为warmup_bias_lr大于initial_lr)
+                    para_g['lr'] = np.interp(tot_step,
+                                             [0., self.hyp['warmup_steps']],
+                                             [self.hyp['warmup_bias_lr'], para_g['initial_lr'] * linear_lr(epoch)])
+                if "momentum" in para_g:  # momentum(momentum在warmup阶段逐渐增大)
+                    para_g['momentum'] = np.interp(tot_step,
+                                                   [0., self.hyp['warmup_steps']],
+                                                   [self.hyp['warmup_momentum'], self.hyp['optimizer_momentum']])
+
 
     @logger.catch
     @catch_warnnings
@@ -255,7 +279,7 @@ class Training:
                 gt_seg.requires_grad = False
 
                 img, gt_seg = self.mutil_scale_training(img, gt_seg)
-                self.warmup(cur_epoch, tot_step)
+                self.warmup(cur_epoch, tot_step)  # 在warmup期间lr_scheduler只有记录作用, 真正改变lr的还是warmup操作
                 my_context = self.model.no_sync if self.is_distributed and cur_step % self.accumulate != 0 else nullcontext
                 with my_context():
                     with amp.autocast(enabled=self.use_cuda):
@@ -286,7 +310,10 @@ class Training:
                 self.test(tot_step, cur_epoch)
                 tot_loss_before = tot_loss.item()
                 del img, gt_seg, tot_loss
-            self.lr_scheduler.step()  # 因为self.accumulate会从1开始增长, 因此第一次执行训练时self.optimizer.step()一定会在self.lr_scheduler.step()之前被执行
+                if self.hyp['scheduler_type'].lower() == "onecycle":
+                    self.lr_scheduler.step()  # 因为self.accumulate会从1开始增长, 因此第一次执行训练时self.optimizer.step()一定会在self.lr_scheduler.step()之前被执行
+            if self.hyp['scheduler_type'].lower() != "onecycle":
+                self.lr_scheduler.step()
             gc.collect()
 
     def update_meter(self, cur_epoch, cur_step, tot_step, input_dim, batch_size, iter_time, data_time, loss_dict, is_best):
@@ -311,7 +338,7 @@ class Training:
                           acc  = self.meter.get_filtered_meter('acc')['acc'].global_avg if len(self.meter.get_filtered_meter('acc')) > 0 else 0.0, 
                           rank = self.rank,
                           **loss_dict)
-
+    
     def get_local_batch_size(self):
         if dist.is_available() and dist.is_initialized():
             return self.hyp['batch_size'] // dist.get_world_size()
@@ -334,26 +361,6 @@ class Training:
                 for tag, fmt in zip(tags, fmts):
                     log_msg += tag + '=' + '{' + tag +  ':' + fmt + '}' + ", "
                 self.logger.info(log_msg.format(**show_dict))
-
-    def warmup(self, epoch, tot_step):
-        if self.hyp['do_warmup'] and tot_step < self.hyp["warmup_steps"]:
-            self.accumulate = int(max(1, np.interp(tot_step,
-                                               [0., self.hyp['warmup_steps']],
-                                               [1, self.get_local_accumulate_step()]).round()))
-            # optimizer有3各param_group,分别是parm_other, param_weight, param_bias
-            for j, para_g in enumerate(self.optimizer.param_groups):
-                if j != 2:  # param_other and param_weight(该部分参数的learning rate逐渐增大)
-                    para_g['lr'] = np.interp(tot_step,
-                                             [0., self.hyp['warmup_steps']],
-                                             [0., para_g['initial_lr'] * self._lr_lambda(epoch)])
-                else:  # param_bias(该部分参数的learning rate逐渐减小,因为warmup_bias_lr大于initial_lr)
-                    para_g['lr'] = np.interp(tot_step,
-                                             [0., self.hyp['warmup_steps']],
-                                             [self.hyp['warmup_bias_lr'], para_g['initial_lr'] * self._lr_lambda(epoch)])
-                if "momentum" in para_g:  # momentum(momentum在warmup阶段逐渐增大)
-                    para_g['momentum'] = np.interp(tot_step,
-                                                   [0., self.hyp['warmup_steps']],
-                                                   [self.hyp['warmup_momentum'], self.hyp['momentum']])
 
     def postprocess(self, inp, pred_segs, info):
         """
@@ -492,8 +499,9 @@ class Training:
                 "model_state_dict": self.model.state_dict(),
                 "optim_state_dict": self.optimizer.state_dict() if save_optimizer else None,
                 "scaler_state_dict": self.scaler.state_dict(),
+                'lr_scheduler_type': self.hyp['scheduler_type'], 
                 "lr_scheduler_state_dict": self.lr_scheduler.state_dict(),
-                "optim_type": self.hyp['optimizer'], 
+                "optim_type": self.hyp['optimizer_type'], 
                 "loss": tot_loss,
                 "epoch": cur_epoch,
                 "step": tot_step, 
@@ -643,7 +651,7 @@ def main(x):
     config_ = Config()
     class Args:
         def __init__(self) -> None:
-            self.cfg = "./config/train.yaml"
+            self.cfg = "./config/train_dist.yaml"
     args = Args()
 
     hyp = config_.get_config(args.cfg, args)
@@ -677,7 +685,7 @@ if __name__ == '__main__':
     
     from utils import launch, get_num_devices
     import os
-    os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+    os.environ['CUDA_VISIBLE_DEVICES'] = "1"
     num_gpu = get_num_devices()
     clear_dir(str(current_work_directionary / 'log'))
     launch(

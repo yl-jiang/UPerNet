@@ -1,50 +1,47 @@
 loss_hyp:
-  cls_loss_scale: 0.5  # 分类损失权重
+  weight_dice: 0.5  # 分类损失权重
+  weight_ce: 0.5
+  weight_bce: 0.5
 
 train_hyp:
   pretrained_model_path: ""  # 预训练模型路径
-  train_img_dir: "xxx/Dataset/Segmentation/cityscapes/image/train/"  # 存放训练图像的文件夹路径
-  train_seg_dir: "xxx/Dataset/Segmentation/cityscapes/label/train/"  # 存放训练label的文件夹路径
+  train_img_dir: "../Dataset/Segmentation/cityscapes/image/train/"  # 存放训练图像的文件夹路径
+  train_seg_dir: "../Dataset/Segmentation/cityscapes/label/train/"  # 存放训练label的文件夹路径
   test_img_dir: "./data/testimage"  # for test
-  val_img_dir: "xxx/Dataset/Segmentation/cityscapes/image/val/"  # validation image dir
-  val_seg_dir: "xxx/Dataset/Segmentation/cityscapes/label/val/"  # validation label dir
-  cache_num: 100000
+  val_img_dir: "../Dataset/Segmentation/cityscapes/image/val/"  # validation image dir
+  val_seg_dir: "../Dataset/Segmentation/cityscapes/label/val/"  # validation label dir
+  cache_num: 500000
   input_img_size:  # 输入训练网络的图片大小
-    - 448
-    - 448
-  batch_size: 16
+    - 512
+    - 512
+  batch_size: 8
   drop_last: false  # Pytorch DataLoader中的参数
   pin_memory: true  # Pytorch DataLoader中的参数
   shuffle: true  # Pytorch DataLoader中的参数
   num_workers: 0  # Pytorch DataLoader中的参数
   total_epoch: 1000
   device: "gpu"  # 是否使用GPU进行训练['gpu' or 'cpu']
-  accumulate_step: 8  # 累积梯度下降
-  do_model_ema: true  # 是否维持一个Everage Moving Model
-  inference_every: 1  # 每隔多少个epoch validate一次
-  show_tbar_every: 1  # 每个多少个step显示实时训练状态信息
+  accu_batch_size: 64  # 累积梯度下降
+  do_ema: true  # 是否维持一个Everage Moving Model
   use_tta_when_val: false  # validation时是否使用TTA
-  save_log: true  # 是否保存log文件
   mutil_scale_training: false  # 是否使用多尺度训练
-  current_work_dir: null  # 当前工作目录（可以不设置）
-  calculate_metric_every: 1000  # 每个多少个epoch计算一次iou
-  save_ckpt_every: 1  # 每隔多少个epoch保存一次模型
   enable_tensorboard: true
   enable_data_aug: true
-  random_seed: 42
+  random_seed: 3047
   fp16: false
-  mix_precision_training: false
-  num_class: 20
-  save_optimizer: true
+  inference_every: 10  # 每隔多少个epoch validate一次
+  show_tbar_every: 5  # 每个多少个step显示实时训练状态信息
+  save_ckpt_every: 10  # 每隔多少个epoch保存一次模型
+  calculate_metric_every: 2  # 每个多少个epoch计算一次iou
 
 optimizer_hyp:
-  optimizer_type: 'sgd' # 优化器类别/['sgd' or 'adam']
-  basic_lr_per_img: 0.01  # 0.01 / 16
+  optimizer_type: 'adamw' # 'sgd' or 'adamw' or 'adam'
+  scheduler_type: 'onecycle' # 'onecycle' or 'cosine' or 'linear'
+  basic_lr_per_img: 0.000625  # 0.01 / 16
   weight_decay: 0.0
   optimizer_momentum: 0.9
   eps: 0.00000001
   lr_scheculer_bias: 0.1
-  scheduler_type: 'linear'
 
 warm_up:
   do_warmup: true  # 是否开启预热训练
