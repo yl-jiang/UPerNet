@@ -8,9 +8,6 @@ from pathlib import Path
 from datetime import datetime
 from contextlib import nullcontext
 
-current_work_directionary = Path('__file__').parent.absolute()
-sys.path.insert(0, str(current_work_directionary))
-
 import cv2
 import time
 import torch.cuda
@@ -27,6 +24,9 @@ import torch.distributed as dist
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel as DDP
 
+current_work_directionary = Path('__file__').parent.absolute()
+sys.path.insert(0, str(current_work_directionary))
+
 from config import Config
 from loss import CrossEntropyAndBCELoss, CrossEntropyAndDiceLoss
 from utils import maybe_mkdir, clear_dir, get_rank, all_reduce_norm, SegMetirc2D
@@ -35,7 +35,7 @@ from utils import summary_model, get_local_rank, adjust_status
 from data import build_train_dataloader, build_val_dataloader, build_testdataloader
 from utils import catch_warnnings, get_world_size, configure_omp, configure_nccl, print_config
 from utils import save_seg, resize_segmentation, configure_module, synchronize, MeterBuffer
-from nets import UPerNet, USquareNetExeriment
+from nets import UPerNet, USquareNetExeriment, UNet, VNet
 import gc
 
 
@@ -104,6 +104,25 @@ class Training:
                                                                )
         return dataset, dataloader, prefetcher
 
+    def _init_logger(self, model):
+        model_summary = summary_model(model, self.hyp['input_img_size'], verbose=True)
+        logger = logging.getLogger(f"UPerNet_Rank_{self.rank}")
+        formated_config = print_config(self.hyp)  # record training parameters in log.txt
+        logger.setLevel(logging.INFO)
+        txt_log_path = str(self.cwd / 'log' / f'log_rank_{self.rank}' / 'log.txt')
+        maybe_mkdir(Path(txt_log_path).parent)
+        handler = logging.FileHandler(txt_log_path)
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.info("\n" + formated_config)
+        msg = f"\n{'=' * 70} Model Summary {'=' * 70}\n"
+        msg += f"Model Summary:\tlayers {model_summary['number_layers']}; parameters {model_summary['number_params']}; gradients {model_summary['number_gradients']}; flops {model_summary['flops']}GFLOPs"
+        msg += f"\n{'=' * 70}   Training    {'=' * 70}\n"
+        logger.info(msg)
+        return logger
+
     @staticmethod
     def padding(hw, factor=32):
         if isinstance(hw, numbers.Real):
@@ -133,7 +152,7 @@ class Training:
         for m in model.modules():
             if hasattr(m, "bias") and isinstance(m.bias, nn.Parameter):
                 param_group_bias.append(m.bias)
-            if isinstance(m, nn.BatchNorm2d):
+            if isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.GroupNorm):
                 param_group_other.append(m.weight)
             elif hasattr(m, 'weight') and isinstance(m.weight, nn.Parameter):
                 param_group_weight.append(m.weight)
@@ -187,11 +206,12 @@ class Training:
         
         # model, optimizer, lr_scheduler
         torch.cuda.set_device(self.local_rank)
-        model = USquareNetExeriment(in_channel=3, num_class=self.hyp['num_class'])
+        # model = USquareNetExeriment(in_channel=3, num_class=self.hyp['num_class'])
+        # model = UPerNet(in_channel=3, num_class=self.hyp['num_class'])
+        model = UNet(in_channel=3, num_class=self.hyp['num_class'])
         ModelSummary(model, input_size=(1, 3, self.hyp['input_img_size'][0], self.hyp['input_img_size'][1]), device=next(model.parameters()).device)
         self.optimizer    = self._init_optimizer(model)
         self.lr_scheduler = lr_scheduler.LambdaLR(optimizer=self.optimizer, lr_lambda=self._lr_lambda)
-        # model = UPerNet(in_channel=3, num_class=self.hyp['num_class']).to(self.device)
         if self.rank == 0:
             self.writer = SummaryWriter(log_dir=str(self.cwd / 'log'))
 
@@ -301,25 +321,6 @@ class Training:
         if dist.is_available() and dist.is_initialized():
             return self.hyp['accu_batch_size'] / dist.get_world_size() / self.get_local_batch_size()
         return self.hyp['accu_batch_size'] / self.get_local_batch_size()
-
-    def _init_logger(self, model):
-        model_summary = summary_model(model, self.hyp['input_img_size'], verbose=True)
-        logger = logging.getLogger(f"UPerNet_Rank_{self.rank}")
-        formated_config = print_config(self.hyp)  # record training parameters in log.txt
-        logger.setLevel(logging.INFO)
-        txt_log_path = str(self.cwd / 'log' / f'log_rank_{self.rank}' / 'log.txt')
-        maybe_mkdir(Path(txt_log_path).parent)
-        handler = logging.FileHandler(txt_log_path)
-        handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.info("\n" + formated_config)
-        msg = f"\n{'=' * 70} Model Summary {'=' * 70}\n"
-        msg += f"Model Summary:\tlayers {model_summary['number_layers']}; parameters {model_summary['number_params']}; gradients {model_summary['number_gradients']}; flops {model_summary['flops']}GFLOPs"
-        msg += f"\n{'=' * 70}   Training    {'=' * 70}\n"
-        logger.info(msg)
-        return logger
 
     def show_tbar(self, tot_step):
         tags = ("total_loss", "dice", 'iou'  , 'fnr'  , 'fpr'  , 'voe'  , 'rvd'  , 'acc'  , "accumulate", "iter_time", "lr"  , "cur_epoch", "cur_step", "batch_size", "input_dim", "allo_mem", "cach_mem")
@@ -517,8 +518,10 @@ class Training:
             for tag in metric_tags:
                 if tag in self.meter.keys():
                     self.meter.get_filtered_meter(tag)[tag].reset()
-
-            all_reduce_norm(self.model)
+            try:
+                all_reduce_norm(self.model)  # 该函数只对batchnorm和instancenorm有效
+            except:
+                pass
             if self.hyp['do_ema']:
                 eval_model = self.ema_model.ema
             else:
@@ -548,7 +551,10 @@ class Training:
 
     def test(self, cur_step, cur_epoch):
         if cur_step % int(self.hyp.get('inference_every', 1.0)*len(self.traindataloader))== 0:
-            all_reduce_norm(self.model)
+            try:
+                all_reduce_norm(self.model)  # 该函数只对batchnorm和instancenorm有效
+            except:
+                pass
             if self.hyp['do_ema']:
                 eval_model = self.ema_model.ema
             else:
@@ -631,7 +637,6 @@ class Training:
         return pred_segs_out  # (bs, num_class, h, w)
 
 
-from utils import launch, get_num_devices
 def main(x):
     configure_module()
     from utils import print_config
@@ -646,10 +651,33 @@ def main(x):
     print(formated_config)
     train = Training(hyp)
     train.step()
-if __name__ == '__main__':
 
+
+if __name__ == '__main__':
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('--cfg', type=str, required=True, dest='cfg', help='path to config file')
+    # parser.add_argument('--pretrained_model_path',default="", dest='pretrained_model_path') 
+    # parser.add_argument('--batch_size', type=int, default=2, dest='batch_size')
+    # parser.add_argument("--input_img_size", default=640, type=int, dest='input_img_size')
+    # parser.add_argument('--train_img_dir', required=True, dest='train_img_dir', type=str)
+    # parser.add_argument('--train_seg_dir', required=True, dest='train_lab_dir', type=str)
+    # parser.add_argument('--val_img_dir', required=True, dest='val_img_dir', type=str)
+    # parser.add_argument('--val_seg_dir', required=True, dest='val_lab_dir', type=str)
+    # parser.add_argument('--test_img_dir', required=True, dest='test_img_dir', type=str)
+    # parser.add_argument('--model_save_dir', default="", type=str, dest='model_save_dir')
+    # parser.add_argument('--log_save_path', default="", type=str, dest="log_save_path")
+    # parser.add_argument('--aspect_ratio_path', default=None, dest='aspect_ratio_path', type=str, help="aspect ratio list for dataloader sampler, only support serialization object by pickle")
+    # parser.add_argument('--cache_num', default=0, dest='cache_num', type=int)
+    # parser.add_argument('--total_epoch', default=300, dest='total_epoch', type=int)
+    # parser.add_argument('--do_warmup', default=True, type=bool, dest='do_warmup')
+    # parser.add_argument('--use_tta', default=True, type=bool, dest='use_tta')
+    # parser.add_argument('--optimizer', default='sgd', type=str, choices=['sgd', 'adam'], dest='optimizer')
+    # parser.add_argument('--init_lr', default=0.01, type=float, dest='init_lr', help='initialization learning rate')
+    # args = parser.parse_args()
+    
+    from utils import launch, get_num_devices
     import os
-    os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+    os.environ['CUDA_VISIBLE_DEVICES'] = "0"
     num_gpu = get_num_devices()
     clear_dir(str(current_work_directionary / 'log'))
     launch(
