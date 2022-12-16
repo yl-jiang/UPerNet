@@ -32,7 +32,7 @@ train_hyp:
   inference_every: 10  # 每隔多少个epoch validate一次
   show_tbar_every: 5  # 每个多少个step显示实时训练状态信息
   save_ckpt_every: 10  # 每隔多少个epoch保存一次模型
-  calculate_metric_every: 2  # 每个多少个epoch计算一次iou
+  calculate_metric_every: 10  # 每个多少个epoch计算一次iou
 
 optimizer_hyp:
   optimizer_type: 'adamw' # 'sgd' or 'adamw' or 'adam'

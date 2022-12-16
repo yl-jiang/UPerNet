@@ -68,7 +68,6 @@ Model Summary:  319 layers; 31349752 parameters; 31349752 gradients; 16.70868172
 ### metric
 
 ![upernet_dice](readme/upernet_dice.jpg)
-
 ![squarenet_dice](readme/usquare_dice.jpg)
 
 ### 预训练权重
