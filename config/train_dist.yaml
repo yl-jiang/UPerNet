@@ -1,7 +1,7 @@
 loss_hyp:
-  weight_dice: 0.5  # 分类损失权重
-  weight_ce: 0.5
-  weight_bce: 0.5
+  weight_dice: 1.0  # 分类损失权重
+  weight_ce: 1.0
+  weight_bce: 1.0
 
 train_hyp:
   pretrained_model_path: ""  # 预训练模型路径
@@ -36,7 +36,7 @@ train_hyp:
 
 optimizer_hyp:
   optimizer_type: 'adamw' # 'sgd' or 'adamw' or 'adam'
-  scheduler_type: 'onecycle' # 'onecycle' or 'cosine' or 'linear'
+  scheduler_type: 'linear' # 'onecycle' or 'cosine' or 'linear'
   basic_lr_per_img: 0.000625  # 0.01 / 16
   weight_decay: 0.0
   optimizer_momentum: 0.9

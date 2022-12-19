@@ -142,16 +142,17 @@ class SoftDiceLoss(nn.Module):
 
 
 class CrossEntropyAndDiceLoss:
-    def __init__(self, num_class, ignore_index=0) -> None:
+    def __init__(self, num_class, weight_dc=1.0, weight_ce=1.0, ignore_index=0) -> None:
         self.num_class = num_class
         self.ignore_index = ignore_index
         self.ce   = nn.CrossEntropyLoss(reduction='mean')
-        self.dice = SoftDiceLoss(do_bg=False if ignore_index is not None else True)
+        self.dc = SoftDiceLoss(do_bg=False if ignore_index is not None else True)
+        self.weight_dc = weight_dc
+        self.weight_ce = weight_ce
 
     def __call__(self, pred_out_dict, gt_seg):
-        ce_loss_dict, dice_loss_dict = {}, {}
-        ce_tot, dice_tot = gt_seg.new_zeros(1), gt_seg.new_zeros(1)
-        batch_size = gt_seg.size(0)
+        ce_loss_dict, dc_loss_dict = {}, {}
+        ce_tot, dc_tot = gt_seg.new_zeros(1), gt_seg.new_zeros(1)
 
         for k, v in pred_out_dict.items():
             # ce
@@ -160,21 +161,23 @@ class CrossEntropyAndDiceLoss:
             ce_loss_dict[k] = ce_loss
 
             # dice
-            dice_loss = self.dice(v, gt_seg)
-            dice_tot += dice_loss
+            dc_loss = self.dc(v, gt_seg)
+            dc_tot += dc_loss
 
-        ce_loss_dict["total_loss"]   = ce_tot
-        dice_loss_dict['total_loss'] = dice_tot
-        return {"total_loss": ce_tot[0] + dice_tot[0]}
+        ce_loss_dict["total_loss"] = ce_tot * self.weight_ce
+        dc_loss_dict['total_loss'] = dc_tot * self.weight_dc
+        return {"total_loss": ce_tot[0] + dc_tot[0]}
 
 
 class CrossEntropyAndBCELoss:
 
-    def __init__(self, num_class, ignore_index=0) -> None:
+    def __init__(self, num_class, weight_ce=1.0, weight_bce=1.0, ignore_index=0) -> None:
         super(CrossEntropyAndBCELoss, self).__init__()
         self.num_class = num_class
         self.bce = nn.BCEWithLogitsLoss(reduction='none')
         self.ce = nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index)
+        self.weight_ce = weight_ce
+        self.weight_bce = weight_bce
        
     def __call__(self, pred_out_dict, gt_seg):
         """
@@ -215,8 +218,8 @@ class CrossEntropyAndBCELoss:
             bce_tot += bce_loss
 
         
-        ce_out_dict["total_loss"] = ce_tot
-        bce_out_dict['total_loss'] = bce_tot * batch_size
+        ce_out_dict["total_loss"] = ce_tot * self.weight_ce
+        bce_out_dict['total_loss'] = bce_tot * batch_size * self.weight_bce
 
         return {"total_loss": ce_tot[0] + bce_tot[0]}
 

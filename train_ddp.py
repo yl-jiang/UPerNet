@@ -187,7 +187,7 @@ class Training:
 
     def _init_scheduler(self, optimizer, trainloader):
         if self.hyp['scheduler_type'].lower() == "onecycle":   # onecycle lr scheduler
-            scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=0.01, epochs=self.hyp['total_epoch'], steps_per_epoch=len(trainloader), three_phase=True)
+            scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=0.001, epochs=self.hyp['total_epoch'], steps_per_epoch=len(trainloader), three_phase=True)
         elif self.hyp['scheduler_type'].lower() == 'linear':  # linear lr scheduler
             lr_bias = self.hyp['lr_scheculer_bias']
             linear_lr = lambda epoch: (1 - epoch / (self.hyp['total_epoch'] - 1)) * (1. - lr_bias) + lr_bias  # lr_bias越大lr的下降速度越慢,整个epoch跑完最后的lr值也越大
