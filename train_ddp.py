@@ -54,7 +54,12 @@ class Training:
         self.use_cuda = True if torch.cuda.is_available() else False
         self.is_distributed = get_world_size() > 1
 
-        self.basic_lr_per_img = self.hyp['basic_lr_per_img']
+        if dist.is_available() and dist.is_initialized():
+            batch_size = self.hyp['batch_size'] // dist.get_world_size()
+        else:
+            batch_size = self.hyp['batch_size']
+        self.lr = self.hyp['basic_lr_per_img'] * batch_size
+        self.hyp['lr'] = self.lr
         self.cwd = Path('./').absolute()
         self.hyp['current_work_dir'] = str(self.cwd)
         self.meter = MeterBuffer()
@@ -148,11 +153,7 @@ class Training:
             elif hasattr(m, 'weight') and isinstance(m.weight, nn.Parameter):
                 param_group_weight.append(m.weight)
 
-        if dist.is_available() and dist.is_initialized():
-            batch_size = self.hyp['batch_size'] // dist.get_world_size()
-        else:
-            batch_size = self.hyp['batch_size']
-        lr = self.basic_lr_per_img * batch_size
+        lr = self.lr
         
         if self.hyp['optimizer_type'].lower() == "sgd":
             optimizer = optim.SGD(params=param_group_other, lr=lr, nesterov=True, momentum=self.hyp['optimizer_momentum'])
@@ -189,12 +190,11 @@ class Training:
         if self.hyp['scheduler_type'].lower() == "onecycle":   # onecycle lr scheduler
             scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=0.001, epochs=self.hyp['total_epoch'], steps_per_epoch=len(trainloader), three_phase=True)
         elif self.hyp['scheduler_type'].lower() == 'linear':  # linear lr scheduler
-            lr_bias = self.hyp['lr_scheculer_bias']
-            linear_lr = lambda epoch: (1 - epoch / (self.hyp['total_epoch'] - 1)) * (1. - lr_bias) + lr_bias  # lr_bias越大lr的下降速度越慢,整个epoch跑完最后的lr值也越大
+            linear_lr = lambda epoch: (1 - epoch / (self.hyp['total_epoch'] - 1)) * (1. - 0.001) + 0.001  # lr_bias越大lr的下降速度越慢,整个epoch跑完最后的lr值也越大
             scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=linear_lr)
         else:  # consin lr scheduler
-            lr_bias = self.hyp['lr_scheculer_bias']
-            cosin_lr = lambda epoch: ((1 + math.cos(epoch * math.pi / self.hyp['total_epoch'])) / 2) * (1. - lr_bias) + lr_bias  # cosine
+            lr = self.hyp['lr']
+            cosin_lr = lambda epoch: ((1 + math.cos(epoch * math.pi / self.hyp['total_epoch'])) / 2) * (1. - 0.001) + 0.001  # cosine
             scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=cosin_lr)
         return scheduler
 

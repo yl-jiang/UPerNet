@@ -37,11 +37,10 @@ train_hyp:
 optimizer_hyp:
   optimizer_type: 'adamw' # 'sgd' or 'adamw' or 'adam'
   scheduler_type: 'linear' # 'onecycle' or 'cosine' or 'linear'
-  basic_lr_per_img: 0.000625  # 0.01 / 16
+  basic_lr_per_img: 0.0000625  # 0.001 / 16
   weight_decay: 0.0
   optimizer_momentum: 0.9
   eps: 0.00000001
-  lr_scheculer_bias: 0.1
 
 warm_up:
   do_warmup: true  # 是否开启预热训练

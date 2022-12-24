@@ -6,3 +6,4 @@ log/
 *.DS_Store
 distrubuted_training.md
 plot_log.ipynb
+debug.ipynb
