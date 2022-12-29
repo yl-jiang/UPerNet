@@ -86,7 +86,7 @@ class Training:
 
     def load_dataset(self, is_training):
         if is_training:
-                dataset, dataloader, prefetcher = build_train_dataloader(img_dir=self.hyp['train_img_dir'], 
+            dataset, dataloader, prefetcher = build_train_dataloader(img_dir=self.hyp['train_img_dir'], 
                                                                    seg_dir=self.hyp["train_seg_dir"], 
                                                                    batch_size=self.hyp['batch_size'], 
                                                                    drop_last=self.hyp['drop_last'], 
