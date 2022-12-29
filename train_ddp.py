@@ -114,7 +114,7 @@ class Training:
         logger = logging.getLogger(f"UPerNet_Rank_{self.rank}")
         formated_config = print_config(self.hyp)  # record training parameters in log.txt
         logger.setLevel(logging.INFO)
-        txt_log_path = str(self.cwd / 'log' / f'log_rank_{self.rank}' / 'log.txt')
+        txt_log_path = str(self.cwd / 'log' / f'log_rank_{self.rank}' / f'log_{self.model.__class__.__name__}_{datetime.now().strftime("%Y%m%d-%H:%M:%S")}.txt')
         maybe_mkdir(Path(txt_log_path).parent)
         handler = logging.FileHandler(txt_log_path)
         handler.setLevel(logging.INFO)
@@ -194,7 +194,7 @@ class Training:
             linear_lr = lambda epoch: (1 - epoch / (self.hyp['total_epoch'] - 1)) * (1. - max_ds_rate) + max_ds_rate  # lr_bias越大lr的下降速度越慢,整个epoch跑完最后的lr值也越大
             scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=linear_lr)
         else:  # consin lr scheduler
-            max_ds_rate = 0.0001
+            max_ds_rate = 0.0001  # 整个训练过程中lr的最小值等于: max_ds_rate * init_lr
             cosin_lr = lambda epoch: ((1 + math.cos(epoch * math.pi / self.hyp['total_epoch'])) / 2) * (1. - max_ds_rate) + max_ds_rate  # cosine
             scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=cosin_lr)
         return scheduler
@@ -688,7 +688,7 @@ if __name__ == '__main__':
     import os
     os.environ['CUDA_VISIBLE_DEVICES'] = "0"
     num_gpu = get_num_devices()
-    clear_dir(str(current_work_directionary / 'log'))
+    # clear_dir(str(current_work_directionary / 'log'))
     launch(
         main, 
         num_gpus_per_machine= num_gpu, 

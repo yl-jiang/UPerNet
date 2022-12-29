@@ -128,6 +128,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         dummy = torch.rand(4, 3, 256, 256).float()
         net = VNet(3, 10)
+        a = net.__class__.__name__
         pred = net(dummy)
         for k, v in pred.items():
             print(k, v.shape)

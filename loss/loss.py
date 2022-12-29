@@ -35,14 +35,14 @@ def get_tp_fp_fn_tn(pred_softmax: Tensor, gt_seg: Tensor, mask=None, square=Fals
 
     """
     num_class = pred_softmax.size(1)
-    onehot_seg = F.one_hot(gt_seg.squeeze(1).long(), num_classes=num_class)  # (bs, h, w, num_class)
-    onehot_seg = onehot_seg.permute(0, 3, 1, 2)  # (bs, num_class, h, w)
-    onehot_seg.requires_grad = False
+    onehot_gt_seg = F.one_hot(gt_seg.squeeze(1).long(), num_classes=num_class)  # (bs, h, w, num_class)
+    onehot_gt_seg = onehot_gt_seg.permute(0, 3, 1, 2)  # (bs, num_class, h, w)
+    onehot_gt_seg.requires_grad = False
     
-    tp = pred_softmax * onehot_seg
-    fp = pred_softmax * (1 - onehot_seg)
-    fn = (1 - pred_softmax) * onehot_seg
-    tn = (1 - pred_softmax) * (1 - onehot_seg)
+    tp = pred_softmax * onehot_gt_seg
+    fp = pred_softmax * (1 - onehot_gt_seg)
+    fn = (1 - pred_softmax) * onehot_gt_seg
+    tn = (1 - pred_softmax) * (1 - onehot_gt_seg)
 
     if mask is not None:
         tp = torch.stack(tuple(x_i * mask[:, 0] for x_i in torch.unbind(tp, dim=1)), dim=1)
