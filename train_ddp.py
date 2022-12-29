@@ -217,7 +217,7 @@ class Training:
         self.optimizer    = self._init_optimizer(model)
         self.lr_scheduler = self._init_scheduler(self.optimizer, self.traindataloader)
         if self.rank == 0:
-            self.writer = SummaryWriter(log_dir=str(self.cwd / 'log'))
+            self.writer = SummaryWriter(log_dir=str(self.cwd / f'log_rank_{self.rank}'))
 
         self.logger = self._init_logger(model)
         model = model.to(self.device)
