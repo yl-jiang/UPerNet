@@ -95,7 +95,7 @@ class Training:
                                                                    seed=self.hyp['random_seed'], 
                                                                    pin_memory=self.hyp['pin_memory'],
                                                                    num_workers=self.hyp['num_workers'],
-                                                                   enable_data_aug=True, 
+                                                                   enable_data_aug=False, 
                                                                    cache_num=self.hyp['cache_num']
                                                                     )
 
@@ -190,11 +190,12 @@ class Training:
         if self.hyp['scheduler_type'].lower() == "onecycle":   # onecycle lr scheduler
             scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=0.001, epochs=self.hyp['total_epoch'], steps_per_epoch=len(trainloader), three_phase=True)
         elif self.hyp['scheduler_type'].lower() == 'linear':  # linear lr scheduler
-            linear_lr = lambda epoch: (1 - epoch / (self.hyp['total_epoch'] - 1)) * (1. - 0.001) + 0.001  # lr_bias越大lr的下降速度越慢,整个epoch跑完最后的lr值也越大
+            max_ds_rate = 0.0001
+            linear_lr = lambda epoch: (1 - epoch / (self.hyp['total_epoch'] - 1)) * (1. - max_ds_rate) + max_ds_rate  # lr_bias越大lr的下降速度越慢,整个epoch跑完最后的lr值也越大
             scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=linear_lr)
         else:  # consin lr scheduler
-            lr = self.hyp['lr']
-            cosin_lr = lambda epoch: ((1 + math.cos(epoch * math.pi / self.hyp['total_epoch'])) / 2) * (1. - 0.001) + 0.001  # cosine
+            max_ds_rate = 0.0001
+            cosin_lr = lambda epoch: ((1 + math.cos(epoch * math.pi / self.hyp['total_epoch'])) / 2) * (1. - max_ds_rate) + max_ds_rate  # cosine
             scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=cosin_lr)
         return scheduler
 
@@ -211,7 +212,7 @@ class Training:
         self.total_loss_meter  = AverageValueMeter()
         
         torch.cuda.set_device(self.local_rank)
-        model = VNet(in_channel=3, num_class=self.hyp['num_class'])
+        model = USquareNetExeriment(in_channel=3, num_class=self.hyp['num_class'])
         ModelSummary(model, input_size=(1, 3, self.hyp['input_img_size'][0], self.hyp['input_img_size'][1]), device=next(model.parameters()).device)
         self.optimizer    = self._init_optimizer(model)
         self.lr_scheduler = self._init_scheduler(self.optimizer, self.traindataloader)
@@ -234,7 +235,7 @@ class Training:
         self.metric = SegMetirc2D()
             
     def warmup(self, epoch, tot_step):
-        lr_bias = self.hyp['lr_scheculer_bias']
+        lr_bias = self.hyp['warmup_bias_lr']
         linear_lr = lambda epoch: (1. - epoch / (self.hyp['total_epoch'] - 1.)) * (1. - lr_bias) + lr_bias  # lr_bias越大lr的下降速度越慢,整个epoch跑完最后的lr值也越大
         if self.hyp['do_warmup'] and tot_step < self.hyp["warmup_steps"]:
             self.accumulate = int(max(1, np.interp(tot_step,
@@ -685,7 +686,7 @@ if __name__ == '__main__':
     
     from utils import launch, get_num_devices
     import os
-    os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+    os.environ['CUDA_VISIBLE_DEVICES'] = "0"
     num_gpu = get_num_devices()
     clear_dir(str(current_work_directionary / 'log'))
     launch(

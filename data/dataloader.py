@@ -146,7 +146,6 @@ class CitySpaceDataset(Dataset):
             "\n********************************************************************************\n"
             "You are using cached images in RAM to accelerate training.\n"
             "This requires large system RAM.\n"
-            "Make sure you have 16G+ RAM and 6G available disk space for training COCO.\n"
             "********************************************************************************\n"
         )
         max_h = self.input_dim[0]
