@@ -217,9 +217,8 @@ class Training:
         self.optimizer    = self._init_optimizer(model)
         self.lr_scheduler = self._init_scheduler(self.optimizer, self.traindataloader)
         if self.rank == 0:
-            self.writer = SummaryWriter(log_dir=str(self.cwd / f'log_rank_{self.rank}'))
+            self.writer = SummaryWriter(log_dir=str(self.cwd / 'log' / f'log_rank_{self.rank}'))
 
-        self.logger = self._init_logger(model)
         model = model.to(self.device)
         # load pretrained model
         self.load_model(model, None, self.optimizer, self.lr_scheduler, self.scaler, 'cpu')
@@ -232,6 +231,7 @@ class Training:
         if self.hyp['do_ema']:
             self.ema_model = ExponentialMovingAverageModel(model)
         self.model = model
+        self.logger = self._init_logger(model)
         self.metric = SegMetirc2D()
             
     def warmup(self, epoch, tot_step):

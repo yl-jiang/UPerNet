@@ -14,11 +14,11 @@ train_hyp:
   input_img_size:  # 输入训练网络的图片大小
     - 448
     - 448
-  batch_size: 8
+  batch_size: 4
   drop_last: false  # Pytorch DataLoader中的参数
   pin_memory: true  # Pytorch DataLoader中的参数
   shuffle: true  # Pytorch DataLoader中的参数
-  num_workers: 2  # Pytorch DataLoader中的参数
+  num_workers: 0  # Pytorch DataLoader中的参数
   total_epoch: 1000
   device: "gpu"  # 是否使用GPU进行训练['gpu' or 'cpu']
   accu_batch_size: 64  # 累积梯度下降
