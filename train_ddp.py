@@ -584,7 +584,7 @@ class Training:
                         pred_seg = self.do_eval_forward(img)  # (1, num_class, h, w)
                     img_numpy, pred_seg_numpy = self.postprocess(img.detach().cpu().numpy(), pred_seg.detach().cpu().numpy(), info)
                     for k in range(len(img)):
-                        save_path = str(self.cwd / 'result' / f'predictions_rank_{self.rank}' / f"epoch{cur_epoch}_img_{j + k} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.png")
+                        save_path = str(self.cwd / 'result' / f'predictions_rank_{self.rank}' / f"epoch{cur_epoch+1}_img_{j + k} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.png")
                         maybe_mkdir(Path(save_path).parent)
                         save_seg(img_numpy[k], pred_seg_numpy[k], save_path)
                     
