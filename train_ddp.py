@@ -35,7 +35,7 @@ from utils import summary_model, get_local_rank, adjust_status
 from data import build_train_dataloader, build_val_dataloader, build_testdataloader
 from utils import catch_warnnings, get_world_size, configure_omp, configure_nccl, print_config
 from utils import save_seg, resize_segmentation, configure_module, synchronize, MeterBuffer
-from nets import UPerNet, USquareNetExeriment, UNet, VNet
+from nets import UPerNet
 import gc
 
 
@@ -204,15 +204,15 @@ class Training:
 
         # datasets
         self.traindataset, self.traindataloader, self.trainprefetcher = self.load_dataset(is_training=True)
-        self.valdataset, self.valdataloader, self.valprefetcher       = self.load_dataset(is_training=False)
-        self.testdataset, self.testdataloader, self.testprefetcher    = build_testdataloader(self.hyp['test_img_dir'], self.hyp['input_img_size'], num_workers=self.hyp['num_workers'])
+        self.valdataset  , self.valdataloader  , self.valprefetcher   = self.load_dataset(is_training=False)
+        self.testdataset , self.testdataloader , self.testprefetcher  = build_testdataloader(self.hyp['test_img_dir'], self.hyp['input_img_size'], num_workers=self.hyp['num_workers'])
         self.hyp['num_class'] = self.traindataset.num_class
 
         self.scaler = amp.GradScaler(enabled=self.use_cuda)  # mix precision training
         self.total_loss_meter  = AverageValueMeter()
         
         torch.cuda.set_device(self.local_rank)
-        model = USquareNetExeriment(in_channel=3, num_class=self.hyp['num_class'])
+        model = UPerNet(in_channel=3, num_class=self.hyp['num_class'])
         ModelSummary(model, input_size=(1, 3, self.hyp['input_img_size'][0], self.hyp['input_img_size'][1]), device=next(model.parameters()).device)
         self.optimizer    = self._init_optimizer(model)
         self.lr_scheduler = self._init_scheduler(self.optimizer, self.traindataloader)

@@ -53,7 +53,7 @@ class ConvBnAct(nn.Module):
         super(ConvBnAct, self).__init__()
         self.conv = nn.Conv2d(in_channel, out_channel, kernel, stride, padding=padding, dilation=dilation, bias=bias)
         self.bn = nn.BatchNorm2d(out_channel)
-        self.act = nn.SiLU(inplace=True) if act else nn.Identity()
+        self.act = nn.ReLU(inplace=True) if act else nn.Identity()
 
     def forward(self, x):
         x = self.conv(x)
@@ -73,7 +73,7 @@ class PyramidPoolingModule(nn.Module):
         self.cba2 = ConvBnAct(in_channels, inter_channels, 1, 1, 0)
         self.cba3 = ConvBnAct(in_channels, inter_channels, 1, 1, 0)
         self.cba4 = ConvBnAct(in_channels, inter_channels, 1, 1, 0)
-        self.out = ConvBnAct(in_channels * 2, out_channels, 1, 1, 0)
+        self.out  = ConvBnAct(in_channels * 2, out_channels, 1, 1, 0)
 
     def pool(self, x, size):
         return nn.AdaptiveAvgPool2d(size)(x)
@@ -204,8 +204,6 @@ class FeaturePyramidNet(nn.Module):
         return fpn_out
 
 
-
-
 class UPerNet(nn.Module):
 
     def __init__(self, in_channel=3, layers=[3, 4, 6, 3], num_class=20, fpn_dim=256):
@@ -221,15 +219,15 @@ class UPerNet(nn.Module):
     def forward(self, x):
         seg_size = x.shape[2:]
         resnet_features = self.backbone(x)
-        ppm_f = self.ppm(resnet_features['resnet_layer4'])
-        resnet_features.update({'resnet_layer4': ppm_f})
-        fpn_f = self.fpn(resnet_features)
-        out_size = fpn_f['fpn_layer1'].shape[2:]
+        ppm = self.ppm(resnet_features['resnet_layer4'])
+        resnet_features.update({'resnet_layer4': ppm})
+        fpn = self.fpn(resnet_features)
+        out_size = fpn['fpn_layer1'].shape[2:]
         list_f = []
-        list_f.append(fpn_f['fpn_layer1'])
-        list_f.append(F.interpolate(fpn_f['fpn_layer2'], out_size, mode='bilinear', align_corners=False))
-        list_f.append(F.interpolate(fpn_f['fpn_layer3'], out_size, mode='bilinear', align_corners=False))
-        list_f.append(F.interpolate(fpn_f['fpn_layer4'], out_size, mode='bilinear', align_corners=False))
+        list_f.append(fpn['fpn_layer1'])
+        list_f.append(F.interpolate(fpn['fpn_layer2'], out_size, mode='bilinear', align_corners=False))
+        list_f.append(F.interpolate(fpn['fpn_layer3'], out_size, mode='bilinear', align_corners=False))
+        list_f.append(F.interpolate(fpn['fpn_layer4'], out_size, mode='bilinear', align_corners=False))
         x = self.seg(self.fuse(torch.cat(list_f, dim=1)))
         pred = self.out(F.interpolate(x, seg_size, mode='bilinear', align_corners=False))
         
