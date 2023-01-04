@@ -265,6 +265,7 @@ class Training:
         self.model.zero_grad()
         per_epoch_iters = len(self.traindataloader)
         for cur_epoch in range(1, self.hyp['total_epoch']+1):
+            torch.cuda.empty_cache()
             self.model.train()
             for i in range(per_epoch_iters):
                 start_time = time.time()
@@ -311,7 +312,7 @@ class Training:
                 self.save_model(cur_epoch, tot_step, tot_loss, True)
                 self.test(tot_step, cur_epoch)
                 tot_loss_before = tot_loss.item()
-                del img, gt_seg, tot_loss
+                del x, img, gt_seg, tot_loss, preds, loss_dict
                 if self.hyp['scheduler_type'].lower() == "onecycle":
                     self.lr_scheduler.step()  # 因为self.accumulate会从1开始增长, 因此第一次执行训练时self.optimizer.step()一定会在self.lr_scheduler.step()之前被执行
             if self.hyp['scheduler_type'].lower() != "onecycle":
@@ -561,6 +562,7 @@ class Training:
 
     def test(self, cur_step, cur_epoch):
         if cur_step % int(self.hyp.get('inference_every', 1.0)*len(self.traindataloader))== 0:
+            torch.cuda.empty_cache()
             try:
                 all_reduce_norm(self.model)  # 该函数只对batchnorm和instancenorm有效
             except:
@@ -588,6 +590,7 @@ class Training:
                         save_path = str(self.cwd / 'result' / f'predictions_rank_{self.rank}' / f"epoch{cur_epoch+1}_img_{j + k} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.png")
                         maybe_mkdir(Path(save_path).parent)
                         save_seg(img_numpy[k], pred_seg_numpy[k], save_path)
+                    del y, img, info, img_numpy, pred_seg, pred_seg_numpy
                     
             synchronize()
             gc.collect()
