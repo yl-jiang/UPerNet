@@ -35,7 +35,7 @@ from utils import summary_model, get_local_rank, adjust_status
 from data import build_train_dataloader, build_val_dataloader, build_testdataloader
 from utils import catch_warnnings, get_world_size, configure_omp, configure_nccl, print_config
 from utils import save_seg, resize_segmentation, configure_module, synchronize, MeterBuffer
-from nets import UPerNet
+from nets import UPerNet, USquareNetExeriment
 import gc
 
 
@@ -212,7 +212,7 @@ class Training:
         self.total_loss_meter  = AverageValueMeter()
         
         torch.cuda.set_device(self.local_rank)
-        model = UPerNet(in_channel=3, num_class=self.hyp['num_class'])
+        model = USquareNetExeriment(in_channel=3, num_class=self.hyp['num_class'])
         ModelSummary(model, input_size=(1, 3, self.hyp['input_img_size'][0], self.hyp['input_img_size'][1]), device=next(model.parameters()).device)
         self.optimizer    = self._init_optimizer(model)
         self.lr_scheduler = self._init_scheduler(self.optimizer, self.traindataloader)
@@ -286,9 +286,10 @@ class Training:
                     with amp.autocast(enabled=self.use_cuda):
                         preds = self.model(img)
                         loss_dict = self.loss_fcn(preds, gt_seg)
+                        # loss_dict['total_loss'] /= self.accumulate
+                        loss_dict['total_loss'] *= get_world_size()
 
                     iter_end_time = time.time()
-                    loss_dict['total_loss'] /= self.accumulate
                     tot_loss = loss_dict['total_loss']
                     self.scaler.scale(tot_loss).backward()
                     if cur_step % self.accumulate == 0:

@@ -98,8 +98,8 @@ def print_config(args):
 
 class ExponentialMovingAverageModel:
     """
-    从始至终维持一个model，并不断更新该model的参数，但该mdoel仅仅是为了inference。
-    随着训练的进行，越靠后面的模型参数对ema模型的影响越大。
+    从始至终维持一个model, 并不断更新该model的参数, 但该mdoel仅仅是为了inference。
+    随着训练的进行, 越靠后面的模型参数对ema模型的影响越大。
     """
     def __init__(self, model, decay_ratio=0.9999, update_num=0):
         self.ema = deepcopy(model).eval()

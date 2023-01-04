@@ -39,16 +39,16 @@ def get_tp_fp_fn_tn(pred_softmax: Tensor, gt_seg: Tensor, mask=None, square=Fals
     onehot_gt_seg = onehot_gt_seg.permute(0, 3, 1, 2)  # (bs, num_class, h, w)
     onehot_gt_seg.requires_grad = False
     
-    tp = pred_softmax * onehot_gt_seg
-    fp = pred_softmax * (1 - onehot_gt_seg)
-    fn = (1 - pred_softmax) * onehot_gt_seg
-    tn = (1 - pred_softmax) * (1 - onehot_gt_seg)
+    tp = pred_softmax * onehot_gt_seg              # (bs, num_class, h, w)
+    fp = pred_softmax * (1 - onehot_gt_seg)        # (bs, num_class, h, w)
+    fn = (1 - pred_softmax) * onehot_gt_seg        # (bs, num_class, h, w)
+    tn = (1 - pred_softmax) * (1 - onehot_gt_seg)  # (bs, num_class, h, w)
 
     if mask is not None:
-        tp = torch.stack(tuple(x_i * mask[:, 0] for x_i in torch.unbind(tp, dim=1)), dim=1)
-        fp = torch.stack(tuple(x_i * mask[:, 0] for x_i in torch.unbind(fp, dim=1)), dim=1)
-        fn = torch.stack(tuple(x_i * mask[:, 0] for x_i in torch.unbind(fn, dim=1)), dim=1)
-        tn = torch.stack(tuple(x_i * mask[:, 0] for x_i in torch.unbind(tn, dim=1)), dim=1)
+        tp = torch.stack(tuple(x_i * mask[:, 0] for x_i in torch.unbind(tp, dim=1)), dim=1)  # [(bs, h, w), (bs, h, w), ...] -> (bs, num_class, h, w)
+        fp = torch.stack(tuple(x_i * mask[:, 0] for x_i in torch.unbind(fp, dim=1)), dim=1)  # [(bs, h, w), (bs, h, w), ...] -> (bs, num_class, h, w)
+        fn = torch.stack(tuple(x_i * mask[:, 0] for x_i in torch.unbind(fn, dim=1)), dim=1)  # [(bs, h, w), (bs, h, w), ...] -> (bs, num_class, h, w)
+        tn = torch.stack(tuple(x_i * mask[:, 0] for x_i in torch.unbind(tn, dim=1)), dim=1)  # [(bs, h, w), (bs, h, w), ...] -> (bs, num_class, h, w)
 
     if square:
         tp = tp ** 2
@@ -58,10 +58,10 @@ def get_tp_fp_fn_tn(pred_softmax: Tensor, gt_seg: Tensor, mask=None, square=Fals
 
     axes = tuple([0] + list(range(2, len(pred_softmax.size()))))  # [0, 2, 3]
     if len(axes) > 0:
-        tp = sum_tensor(tp, axes, keepdim=False)
-        fp = sum_tensor(fp, axes, keepdim=False)
-        fn = sum_tensor(fn, axes, keepdim=False)
-        tn = sum_tensor(tn, axes, keepdim=False)
+        tp = sum_tensor(tp, axes, keepdim=False)  # (num_class,)
+        fp = sum_tensor(fp, axes, keepdim=False)  # (num_class,)
+        fn = sum_tensor(fn, axes, keepdim=False)  # (num_class,)
+        tn = sum_tensor(tn, axes, keepdim=False)  # (num_class,)
 
     return tp, fp, fn, tn
 
@@ -132,7 +132,7 @@ class SoftDiceLoss(nn.Module):
 
         nominator   = 2 * tp + self.smooth
         denominator = 2 * tp + fp + fn + self.smooth
-        dc = nominator / (denominator + 1e-8)
+        dc = nominator / (denominator + 1e-8)  # (num_class,)
 
         if not self.do_bg:
             dc = dc[1:]
@@ -145,7 +145,7 @@ class CrossEntropyAndDiceLoss:
     def __init__(self, num_class, weight_dc=1.0, weight_ce=1.0, ignore_index=0) -> None:
         self.num_class = num_class
         self.ignore_index = ignore_index
-        self.ce   = nn.CrossEntropyLoss(reduction='mean')
+        self.ce = nn.CrossEntropyLoss(reduction='mean')
         self.dc = SoftDiceLoss(do_bg=False if ignore_index is not None else True)
         self.weight_dc = weight_dc
         self.weight_ce = weight_ce
