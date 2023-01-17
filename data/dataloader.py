@@ -93,10 +93,10 @@ class CitySpaceDataset(Dataset):
 
     def __init__(self, img_dir, seg_dir, img_size, enable_data_aug=True, transform=None, cache_num=0) -> None:
         super(CitySpaceDataset, self).__init__(enable_data_aug=enable_data_aug, input_dimension=img_size)
-        self.img_dir = img_dir
-        self.seg_dir = seg_dir
+        self.img_dir = Path(img_dir)
+        self.seg_dir = Path(seg_dir)
         self.trans = transform
-        self.db_img, self.db_seg = self.make_db()
+        self.filenames = self.make_db()
         self.imgs = None
         if cache_num > 0:
             self.cache_num =  cache_num if cache_num <= len(self) else len(self) # len(self)
@@ -110,8 +110,8 @@ class CitySpaceDataset(Dataset):
         assert Path(self.img_dir).exists(), f"directory: {self.img_dir} is not exists!"
         assert Path(self.seg_dir).exists(), f"directory: {self.seg_dir} is not exists!"
 
-        img_filepathes = [p for p in Path(self.img_dir).iterdir() if p.suffix in ([".jpg", ".png", ".tiff"])]
-        seg_filepathes = [p for p in Path(self.seg_dir).iterdir() if p.suffix in ([".jpg", ".png", ".tiff"])]
+        img_filepathes = [p for p in self.img_dir.iterdir() if p.suffix in ([".jpg", ".png", ".tiff"])]
+        seg_filepathes = [p for p in self.seg_dir.iterdir() if p.suffix in ([".jpg", ".png", ".tiff"])]
         assert len(img_filepathes) == len(seg_filepathes), f"len(img_filepathes): {len(img_filepathes)}, but len(seg_filenames): {len(seg_filepathes)}"
         #                                                     (aachen              , 000062              , 000019)
         img_filepathes = sorted(img_filepathes, key=lambda x: (x.stem.split("_")[0], x.stem.split("_")[1], x.stem.split("_")[2]))
@@ -121,17 +121,22 @@ class CitySpaceDataset(Dataset):
         for i, p in enumerate(img_filepathes):
             img_filename = '_'.join(p.stem.split("_")[:-1])
             assert img_filename in seg_filenames, f"image filename: {img_filepathes[i]}, can not found matched segmentation file."
-        return img_filepathes, seg_filepathes
+        return seg_filenames
 
     def __len__(self):
-        return len(self.db_img)
+        return len(self.filenames)
 
     def load_resized_data_pair(self, index):
-        img_p = self.db_img[index]
-        seg_p = self.db_seg[index]
+        filename = self.filenames[index]
+        img_p = self.img_dir / f"{filename}_leftImg8bit.png"
+        assert img_p.exists(), f"{img_p} is not exists!"
+        seg_p = self.seg_dir / f"{filename}_gtFine_labelTrainIds.png"
+        assert seg_p.exists(), f"{seg_p} is not exists!"
+        
         img_arr = cv2.imread(str(img_p))  # (h, w, 3)
         img_arr = cv2.cvtColor(img_arr, cv2.COLOR_BGR2RGB)
         seg_arr = cv2.imread(str(seg_p), 0)[:, :, None]  # (h, w, 1)
+        assert img_arr.shape[0] == seg_arr.shape[0] and img_arr.shape[1] == seg_arr.shape[1], f"img_arr's and seg_arr's shape should be the same, but img_arr.shape={img_arr.shape[:2]} and seg_arr.shape={seg_arr.shape[:2]}"
         # cityspace数据集中的背景类mask值为255, 将背景类的mask修改为0
         bg_mask = seg_arr == 255
         seg_arr += 1
@@ -193,10 +198,17 @@ class CitySpaceDataset(Dataset):
             img_arr = data_pair[..., :3]
             seg_arr = data_pair[..., -1:]
         else:
-            img_p = self.db_img[index]
-            seg_p = self.db_seg[index]
+            filename = self.filenames[index]
+            img_p = self.img_dir / f"{filename}_leftImg8bit.png"
+            assert img_p.exists(), f"{img_p} is not exists!"
+            seg_p = self.seg_dir / f"{filename}_gtFine_labelTrainIds.png"
+            assert seg_p.exists(), f"{seg_p} is not exists!"
+            
             img_arr = cv2.imread(str(img_p))  # (h, w, 3)
+            img_arr = cv2.cvtColor(img_arr, cv2.COLOR_BGR2RGB)
             seg_arr = cv2.imread(str(seg_p), 0)[:, :, None]  # (h, w, 1)
+            assert img_arr.shape[0] == seg_arr.shape[0] and img_arr.shape[1] == seg_arr.shape[1], f"img_arr's and seg_arr's shape should be the same, but img_arr.shape={img_arr.shape[:2]} and seg_arr.shape={seg_arr.shape[:2]}"
+        
             # cityspace数据集中的背景类mask值为255, 将背景类的mask修改为0
             bg_mask = seg_arr == 255
             seg_arr += 1
@@ -207,6 +219,7 @@ class CitySpaceDataset(Dataset):
 
     @Dataset.aug_getitem
     def __getitem__(self, index):
+        assert index < len(self), f"index should less than {len(self)}, but got {index}"
         img_arr, seg_arr = self.pull_item(index) 
 
         if self.enable_data_aug and self.trans is not None:

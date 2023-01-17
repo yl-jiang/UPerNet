@@ -10,7 +10,7 @@ train_hyp:
   test_img_dir: "./data/testimage"  # for test
   val_img_dir: "../../Dataset/Segmentation/cityscapes/image/val/"  # validation image dir
   val_seg_dir: "../../Dataset/Segmentation/cityscapes/label/val/"  # validation label dir
-  cache_num: 500000
+  cache_num: 0
   input_img_size:  # 输入训练网络的图片大小
     - 448
     - 448
@@ -21,32 +21,33 @@ train_hyp:
   num_workers: 0  # Pytorch DataLoader中的参数
   total_epoch: 1000
   device: "gpu"  # 是否使用GPU进行训练['gpu' or 'cpu']
-  accu_batch_size: 64  # 累积梯度下降
+  accu_batch_size: 48  # 累积梯度下降
   do_ema: true  # 是否维持一个Everage Moving Model
   use_tta_when_val: false  # validation时是否使用TTA
   mutil_scale_training: false  # 是否使用多尺度训练
   enable_tensorboard: true
   enable_data_aug: true
-  random_seed: 3047
+  random_seed: 7
   fp16: false
   inference_every: 5  # 每隔多少个epoch validate一次
   show_tbar_every: 5  # 每个多少个step显示实时训练状态信息
   save_ckpt_every: 5  # 每隔多少个epoch保存一次模型
   calculate_metric_every: 5  # 每个多少个epoch计算一次iou
+  log_postfix: 'sgd_relu_onecycle'
 
 optimizer_hyp:
   optimizer_type: 'sgd' # 'sgd' or 'adamw' or 'adam'
-  scheduler_type: 'cosine' # 'onecycle' or 'cosine' or 'linear'
+  scheduler_type: 'onecycle' # 'onecycle' or 'cosine' or 'linear'
   basic_lr_per_img: 0.000625  # 0.01 / 16
   weight_decay: 0.0
-  optimizer_momentum: 0.9
+  optimizer_momentum: 0.98
   eps: 0.00000001
 
 warm_up:
   do_warmup: true  # 是否开启预热训练
   warmup_epoch: 3
-  warmup_bias_lr: 0.1
-  warmup_momentum: 0.8
+  warmup_bias_lr: 0.2
+  warmup_momentum: 0.95
 
 data_aug_hyp:
   data_aug_saturation_p: 0.1
@@ -65,7 +66,7 @@ data_aug_hyp:
   data_aug_fliplr_p: 0.5
   data_aug_flipud_p: 0.0
   data_aug_fill_value: 114
-  data_aug_cutout_p: 0.05
+  data_aug_cutout_p: 0.0
   data_aug_brightness_p: 0.1
   data_aug_cutout_iou_thr: 0.3  # 若随机产生的mask与target任一bbox的iou值大于该阈值，则会采取一些行动避免这种情况发生（默认操作是舍弃该mask）
 

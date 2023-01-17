@@ -53,9 +53,9 @@ class ConvBnAct(nn.Module):
         super(ConvBnAct, self).__init__()
         self.conv = nn.Conv2d(in_channel, num_class, kernel, stride, padding=padding, dilation=dilation, bias=bias)
         self.bn = nn.BatchNorm2d(num_class)
-        # self.act = nn.SiLU(inplace=True) if act else nn.Identity()
+        self.act = nn.SiLU(inplace=True) if act else nn.Identity()
         # self.act = nn.ReLU(inplace=True) if act else nn.Identity()
-        self.act = nn.LeakyReLU(negative_slope=0.01, inplace=True) if act else nn.Identity()
+        # self.act = nn.LeakyReLU(negative_slope=0.01, inplace=True) if act else nn.Identity()
 
     def forward(self, x):
         x = self.conv(x)
